@@ -158,6 +158,13 @@ def limpiar_lista_archivos(raw_data):
             lista_limpia.append(item)
     return lista_limpia
 
+def vaciar_coleccion(nombre_coleccion):
+    """Elimina todos los documentos dentro de una colección en Firestore."""
+    docs = list(db.collection(nombre_coleccion).stream())
+    for doc in docs:
+        db.collection(nombre_coleccion).document(doc.id).delete()
+    return len(docs)
+
 # --- GESTIÓN DE ESTADOS Y URL ---
 params = st.query_params
 if "modo_vista" not in st.session_state: 
@@ -517,6 +524,22 @@ def renderizar_panel_admin():
                             st.rerun()
                         except Exception as err:
                             st.error(f"Error al guardar cliente: {err}")
+
+        # --- SECCIÓN PARA VACIAR BASE DE DATOS COMPLETA ---
+        with st.expander("⚠️ ZONA DE DANGER: Vaciar toda la Base de Datos", expanded=False):
+            st.error("Esta acción eliminará PERMANENTEMENTE todos los pedidos y clientes guardados en Firebase. No se puede deshacer.")
+            confirmacion = st.checkbox("Entiendo los riesgos y deseo borrar TODOS los datos de Firebase.")
+            if st.button("🔥 ELIMINAR TODOS LOS DATOS DE FIREBASE", use_container_width=True):
+                if confirmacion:
+                    try:
+                        cant_pedidos = vaciar_coleccion("pedidos_bordado")
+                        cant_clientes = vaciar_coleccion("usuarios_perfil")
+                        st.success(f"✅ Base de datos vaciada con éxito. Se eliminaron {cant_pedidos} pedidos y {cant_clientes} perfiles de clientes.")
+                        st.rerun()
+                    except Exception as err_vaciar:
+                        st.error(f"Error al vaciar Firebase: {err_vaciar}")
+                else:
+                    st.warning("Debes marcar la casilla de confirmación para proceder.")
 
         st.markdown("---")
 
