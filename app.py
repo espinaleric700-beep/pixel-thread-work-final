@@ -278,10 +278,28 @@ def renderizar_tablas_cliente(user_clean):
                                         nuevo_estilo = "PLANO"
                                         
                                     nuevos_comentarios = st.text_area("Comentarios:", value=p.get('comentarios', ''), key=f"edit_com_{doc_id}")
-                                    nuevos_archivos = st.file_uploader("Agregar más archivos:", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"edit_arch_{doc_id}")
+
+                                    # --- GESTIÓN DE ARCHIVOS EXISTENTES ---
+                                    archivos_actuales = p.get('archivos', [])
+                                    if archivos_actuales:
+                                        st.markdown("**📂 Archivos subidos previamente:**")
+                                        for idx_a, arch in enumerate(archivos_actuales):
+                                            col_a1, col_a2 = st.columns([4, 1])
+                                            with col_a1:
+                                                st.caption(f"📄 {arch.get('nombre', 'archivo')}")
+                                            with col_a2:
+                                                if st.button("❌", key=f"cli_del_file_{doc_id}_{idx_a}", help="Eliminar este archivo"):
+                                                    archivos_actuales.pop(idx_a)
+                                                    db.collection("pedidos_bordado").document(doc_id).update({
+                                                        "archivos": archivos_actuales
+                                                    })
+                                                    st.success("Archivo eliminado.")
+                                                    st.rerun()
+
+                                    nuevos_archivos = st.file_uploader("Agregar nuevos archivos:", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"edit_arch_{doc_id}")
 
                                     if st.button("💾 Guardar Cambios", key=f"btn_save_{doc_id}", use_container_width=True):
-                                        lista_arch = p.get('archivos', [])
+                                        lista_arch = archivos_actuales
                                         if nuevos_archivos:
                                             ts = int(datetime.now().timestamp())
                                             for na in nuevos_archivos:
@@ -300,7 +318,7 @@ def renderizar_tablas_cliente(user_clean):
                                         st.success("¡Pedido actualizado!")
                                         st.rerun()
 
-                                if st.button("🗑️ Eliminar Pedido", key=f"cli_del_{doc_id}", use_container_width=True):
+                                if st.button("🗑️ Eliminar Pedido Completo", key=f"cli_del_{doc_id}", use_container_width=True):
                                     db.collection("pedidos_bordado").document(doc_id).delete()
                                     recalcular_turnos()
                                     st.success("Pedido eliminado correctamente.")
