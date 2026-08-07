@@ -216,7 +216,6 @@ st.markdown("<br>", unsafe_allow_html=True)
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_tablas_cliente(user_clean):
-    st.caption("🔄 *Actualizando datos automáticamente cada 10 segundos...*")
     tab_pendientes, tab_completados = st.tabs(["⏳ Pedidos Pendientes", "✅ Pedidos Completados"])
 
     todos = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
@@ -291,7 +290,6 @@ def renderizar_tablas_cliente(user_clean):
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_panel_admin():
-    st.caption("🔄 *Sincronizando estado de cola y Firebase automáticamente cada 10 segundos...*")
     uso_fb = obtener_uso_firebase()
     porcentaje_uso = uso_fb["porcentaje"]
     
@@ -664,7 +662,7 @@ if st.session_state.modo_vista == "Cliente":
 
                 st.markdown("---")
                 
-                # Renderiza los pedidos con auto-refresco de 10s
+                # Renderiza los pedidos con auto-refresco silencioso de 10s
                 renderizar_tablas_cliente(user_clean)
 
         except Exception as e:
@@ -676,7 +674,7 @@ if st.session_state.modo_vista == "Cliente":
 else:
     st.subheader("🛠️ Administración General")
     try:
-        # Renderiza el panel completo con auto-refresco de 10s
+        # Renderiza el panel completo con auto-refresco silencioso de 10s
         renderizar_panel_admin()
     except Exception as e:
         st.error(f"Error en panel admin: {e}")
