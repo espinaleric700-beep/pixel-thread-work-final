@@ -1,12 +1,11 @@
 import streamlit as st
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, storage
 from datetime import datetime
-import base64
-from io import BytesIO
 from PIL import Image
+from io import BytesIO
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Pixel Thread | Pro", layout="wide")
 
 FIREBASE_CONFIG = {
@@ -18,7 +17,7 @@ FIREBASE_CONFIG = {
     "appId": "1:1084869559489:web:780de53660fcdc447f0040"
 }
 
-# --- CSS LIMPIO ---
+# --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
     :root {
@@ -97,6 +96,29 @@ def init_fb():
 
 db = init_fb()
 
+# --- FUNCIONES DE FIREBASE STORAGE ---
+def subir_a_firebase_storage(file_obj, ruta_destino):
+    """
+    Suba archivos de cualquier tamaño directamente a Firebase Storage
+    y devuelve la URL pública.
+    """
+    try:
+        bucket = storage.bucket()
+        blob = bucket.blob(ruta_destino)
+        
+        # Determina tipo MIME
+        content_type = file_obj.type if hasattr(file_obj, 'type') and file_obj.type else "application/octet-stream"
+        
+        blob.upload_from_string(
+            file_obj.getvalue(),
+            content_type=content_type
+        )
+        blob.make_public()
+        return blob.public_url
+    except Exception as e:
+        st.error(f"Error al subir a Storage: {e}")
+        return None
+
 # --- FUNCIONES AUXILIARES ---
 def recalcular_turnos():
     try:
@@ -132,24 +154,6 @@ def obtener_uso_firebase():
     except Exception:
         return {"total_docs": 0, "lecturas": 45000, "limite_lecturas": 50000, "porcentaje": 90.0}
 
-def procesar_archivo_subido(arch):
-    b_cont = arch.getvalue()
-    nombre_lower = arch.name.lower()
-    
-    if nombre_lower.endswith(('png', 'jpg', 'jpeg')):
-        try:
-            img = Image.open(BytesIO(b_cont))
-            img.thumbnail((700, 700))
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            buffered = BytesIO()
-            img.save(buffered, format="JPEG", quality=70)
-            b_cont = buffered.getvalue()
-        except Exception:
-            pass
-            
-    return base64.b64encode(b_cont).decode("utf-8")
-
 def limpiar_lista_archivos(raw_data):
     lista_limpia = []
     if not isinstance(raw_data, list):
@@ -157,8 +161,8 @@ def limpiar_lista_archivos(raw_data):
     for item in raw_data:
         if isinstance(item, list):
             lista_limpia.extend(limpiar_lista_archivos(item))
-        elif isinstance(item, dict) and "nombre" in item and "data" in item:
-            lista_limpia.append({"nombre": item["nombre"], "data": item["data"]})
+        elif isinstance(item, dict) and "nombre" in item and ("url" in item or "data" in item):
+            lista_limpia.append(item)
     return lista_limpia
 
 # --- GESTIÓN DE ESTADOS Y URL ---
@@ -212,7 +216,7 @@ with col_head2:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # =========================================================
-# FRAGMENTO CON AUTO-REFRESCO CADA 10 SEGUNDOS (CLIENTE)
+# VISTA CLIENTE - CON AUTO-REFRESCO CADA 10s Y STORAGE
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_tablas_cliente(user_clean):
@@ -242,16 +246,14 @@ def renderizar_tablas_cliente(user_clean):
 
                         archivos = p.get('archivos', [])
                         if archivos:
-                            st.markdown("📁 **Archivos:**")
+                            st.markdown("📁 **Archivos Adjuntos:**")
                             for idx_a, arch_item in enumerate(archivos):
                                 nombre_a = arch_item.get('nombre', 'archivo')
-                                try:
-                                    raw_bytes = base64.b64decode(arch_item.get('data'))
+                                url_a = arch_item.get('url', '')
+                                if url_a:
                                     if nombre_a.lower().endswith(('png', 'jpg', 'jpeg')):
-                                        st.image(raw_bytes, width=120, caption=nombre_a)
-                                    st.download_button(f"📥 {nombre_a}", data=raw_bytes, file_name=nombre_a, key=f"dl_cli_{p.get('id')}_{idx_a}")
-                                except Exception:
-                                    pass
+                                        st.image(url_a, width=120, caption=nombre_a)
+                                    st.markdown(f"📥 [Descargar {nombre_a}]({url_a})")
         else:
             st.info("No tienes pedidos pendientes activos.")
 
@@ -272,21 +274,19 @@ def renderizar_tablas_cliente(user_clean):
 
                         archivos_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
                         if archivos_finales:
-                            st.markdown("✨ **Archivos Listos:**")
+                            st.markdown("✨ **Archivos Listos para Descarga:**")
                             for idx_f, af in enumerate(archivos_finales):
                                 nom_f = af.get('nombre', 'resultado')
-                                try:
-                                    raw_f_bytes = base64.b64decode(af.get('data'))
+                                url_f = af.get('url', '')
+                                if url_f:
                                     if nom_f.lower().endswith(('png', 'jpg', 'jpeg')):
-                                        st.image(raw_f_bytes, width=120, caption=nom_f)
-                                    st.download_button(f"📥 {nom_f}", data=raw_f_bytes, file_name=nom_f, key=f"dl_fin_{p.get('id')}_{idx_f}")
-                                except Exception:
-                                    pass
+                                        st.image(url_f, width=120, caption=nom_f)
+                                    st.markdown(f"📥 [Descargar {nom_f}]({url_f})")
         else:
             st.info("Aún no tienes pedidos completados.")
 
 # =========================================================
-# FRAGMENTO CON AUTO-REFRESCO CADA 10 SEGUNDOS (ADMIN)
+# VISTA ADMINISTRADOR - CON AUTO-REFRESCO Y STORAGE
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_panel_admin():
@@ -357,19 +357,17 @@ def renderizar_panel_admin():
                             st.markdown("📁 **Archivos del Cliente:**")
                             for idx_ac, ac in enumerate(archivos_cliente):
                                 nom_ac = ac.get('nombre', 'archivo')
-                                try:
-                                    raw_ac = base64.b64decode(ac.get('data'))
+                                url_ac = ac.get('url', '')
+                                if url_ac:
                                     if nom_ac.lower().endswith(('png', 'jpg', 'jpeg')):
-                                        st.image(raw_ac, width=100, caption=nom_ac)
-                                    st.download_button(f"📥 {nom_ac}", data=raw_ac, file_name=nom_ac, key=f"dl_admin_cli_{doc_id}_{idx_ac}", use_container_width=True)
-                                except Exception:
-                                    pass
+                                        st.image(url_ac, width=100, caption=nom_ac)
+                                    st.markdown(f"📥 [Descargar {nom_ac}]({url_ac})")
 
-                        with st.expander("📤 Gestionar Archivos al Cliente"):
+                        with st.expander("📤 Entregar Archivos Finales"):
                             lista_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
                             
                             if lista_finales:
-                                st.markdown("**✨ Ya enviados:**")
+                                st.markdown("**✨ Ya subidos:**")
                                 for idx_f, af in enumerate(lista_finales):
                                     c_nom, c_btn = st.columns([4, 1])
                                     with c_nom:
@@ -380,9 +378,9 @@ def renderizar_panel_admin():
                                             db.collection("pedidos_bordado").document(doc_id).update({"archivos_finales": lista_finales})
                                             st.rerun()
                                             
-                            st.markdown("**➕ Agregar nuevos:**")
+                            st.markdown("**➕ Seleccionar entregables (.EMB, .DST, .PES, etc):**")
                             archivos_entregables = st.file_uploader(
-                                "Seleccionar archivos:", 
+                                "Seleccionar archivos pesados:", 
                                 type=["dst", "emb", "pes", "png", "jpg", "pdf"],
                                 accept_multiple_files=True, 
                                 key=f"up_admin_{doc_id}"
@@ -394,9 +392,12 @@ def renderizar_panel_admin():
                                         total_archivos = len(archivos_entregables)
                                         
                                         for idx, af in enumerate(archivos_entregables, start=1):
-                                            status_subida.info(f"⏳ Subiendo archivo {idx} de {total_archivos} ({af.name})...")
-                                            b64_fin = procesar_archivo_subido(af)
-                                            lista_finales.append({"nombre": af.name, "data": b64_fin})
+                                            status_subida.info(f"⏳ Subiendo {af.name} ({idx}/{total_archivos}) a Cloud Storage...")
+                                            ruta_storage = f"entregas/{p.get('cliente')}/{doc_id}_{af.name}"
+                                            url_publica = subir_a_firebase_storage(af, ruta_storage)
+                                            
+                                            if url_publica:
+                                                lista_finales.append({"nombre": af.name, "url": url_publica})
                                             
                                         db.collection("pedidos_bordado").document(doc_id).update({
                                             "archivos_finales": lista_finales,
@@ -405,7 +406,7 @@ def renderizar_panel_admin():
                                         })
                                         
                                         recalcular_turnos()
-                                        status_subida.success("¡Completado con éxito!")
+                                        status_subida.success("¡Pedido marcado como Completado!")
                                         st.rerun()
                                     except Exception as e:
                                         status_subida.error(f"Error al subir: {e}")
@@ -443,11 +444,11 @@ def renderizar_panel_admin():
                             recalcular_turnos()
                             st.rerun()
                         
-                        with st.expander("📤 Gestionar Archivos al Cliente"):
+                        with st.expander("📤 Archivos Entregados"):
                             lista_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
                             
                             if lista_finales:
-                                st.markdown("**✨ Ya enviados:**")
+                                st.markdown("**✨ Archivos enviados:**")
                                 for idx_f, af in enumerate(lista_finales):
                                     c_nom, c_btn = st.columns([4, 1])
                                     with c_nom:
@@ -458,29 +459,28 @@ def renderizar_panel_admin():
                                             db.collection("pedidos_bordado").document(doc_id).update({"archivos_finales": lista_finales})
                                             st.rerun()
                                             
-                            st.markdown("**➕ Agregar nuevos:**")
+                            st.markdown("**➕ Agregar más entregables:**")
                             archivos_extra = st.file_uploader(
                                 "Seleccionar archivos:", 
                                 type=["dst", "emb", "pes", "png", "jpg", "pdf"],
                                 accept_multiple_files=True, 
                                 key=f"up_admin_comp_{doc_id}"
                             )
-                            if st.button("🚀 SUBIR ARCHIVOS", key=f"btn_comp_extra_{doc_id}", use_container_width=True):
+                            if st.button("🚀 SUBIR ARCHIVOS EXTRA", key=f"btn_comp_extra_{doc_id}", use_container_width=True):
                                 if archivos_extra:
                                     try:
                                         status_subida = st.empty()
-                                        total_archivos = len(archivos_extra)
-                                        
                                         for idx, af in enumerate(archivos_extra, start=1):
-                                            status_subida.info(f"⏳ Subiendo archivo {idx} de {total_archivos} ({af.name})...")
-                                            b64_fin = procesar_archivo_subido(af)
-                                            lista_finales.append({"nombre": af.name, "data": b64_fin})
+                                            status_subida.info(f"⏳ Subiendo {af.name}...")
+                                            ruta_storage = f"entregas/{p.get('cliente')}/{doc_id}_{af.name}"
+                                            url_pub = subir_a_firebase_storage(af, ruta_storage)
+                                            if url_pub:
+                                                lista_finales.append({"nombre": af.name, "url": url_pub})
                                             
                                         db.collection("pedidos_bordado").document(doc_id).update({
                                             "archivos_finales": lista_finales
                                         })
-                                        
-                                        status_subida.success("¡Archivos agregados con éxito!")
+                                        status_subida.success("¡Archivos agregados!")
                                         st.rerun()
                                     except Exception as e:
                                         status_subida.error(f"Error al subir: {e}")
@@ -508,13 +508,13 @@ def renderizar_panel_admin():
                         st.warning("⚠️ Debes ingresar un ID y un Nombre de cliente.")
                     else:
                         try:
-                            logo_b64 = None
+                            logo_url = None
                             if logo_file:
-                                logo_b64 = procesar_archivo_subido(logo_file)
+                                logo_url = subir_a_firebase_storage(logo_file, f"logos/{nuevo_id}_{logo_file.name}")
                             
                             db.collection("usuarios_perfil").document(nuevo_id).set({
                                 "nombre_usuario": nuevo_nombre,
-                                "logo_b64": logo_b64,
+                                "logo_url": logo_url,
                                 "creado_en": datetime.now()
                             }, merge=True)
                             
@@ -532,7 +532,7 @@ def renderizar_panel_admin():
                 cdata = cdoc.to_dict()
                 cid = cdoc.id
                 cnombre = cdata.get('nombre_usuario', 'Sin Nombre')
-                clogo = cdata.get('logo_b64')
+                clogo = cdata.get('logo_url') or cdata.get('logo_b64')
 
                 with cols_c[i % 3]:
                     with st.container(border=True):
@@ -540,7 +540,7 @@ def renderizar_panel_admin():
                         with col_img:
                             if clogo:
                                 try:
-                                    st.image(base64.b64decode(clogo), width=50)
+                                    st.image(clogo, width=50)
                                 except Exception:
                                     st.markdown("👤")
                             else:
@@ -555,10 +555,10 @@ def renderizar_panel_admin():
                             st.success(f"Cliente {cid} eliminado.")
                             st.rerun()
         else:
-            st.info("No hay perfiles de clientes registrados. Utiliza el formulario superior para agregar el primero.")
+            st.info("No hay perfiles de clientes registrados.")
 
 # =========================================================
-# 1. VISTA CLIENTE
+# LÓGICA PRINCIPAL (SELECCIÓN DE VISTA)
 # =========================================================
 if st.session_state.modo_vista == "Cliente":
     col_user_1, col_user_2 = st.columns([3, 1], vertical_alignment="bottom")
@@ -584,17 +584,17 @@ if st.session_state.modo_vista == "Cliente":
                 st.error("❌ El usuario ingresado no existe o no está registrado en el sistema. Por favor, verifica tu ID.")
             else:
                 nombre_cliente = st.session_state.user
-                logo_cliente_b64 = None
+                logo_cliente_url = None
                 if user_doc.exists:
                     data_u = user_doc.to_dict()
                     nombre_cliente = data_u.get('nombre_usuario', st.session_state.user)
-                    logo_cliente_b64 = data_u.get('logo_b64', None)
+                    logo_cliente_url = data_u.get('logo_url') or data_u.get('logo_b64')
 
                 col_c1, col_c2 = st.columns([0.1, 3.9], vertical_alignment="center")
                 with col_c1:
-                    if logo_cliente_b64:
+                    if logo_cliente_url:
                         try:
-                            st.image(base64.b64decode(logo_cliente_b64), width=85)
+                            st.image(logo_cliente_url, width=85)
                         except Exception:
                             st.markdown("<h1>👤</h1>", unsafe_allow_html=True)
                     else:
@@ -619,7 +619,7 @@ if st.session_state.modo_vista == "Cliente":
                             estilo_frente = st.radio("Estilo:", ["3D (Relieve)", "PLANO"], horizontal=True, key=f"est_{fv}")
 
                     nombre_proyecto = st.text_input("Nombre del Proyecto", key=f"nom_{fv}")
-                    archivos_subidos = st.file_uploader("Archivos", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"arch_{fv}")
+                    archivos_subidos = st.file_uploader("Archivos (Sin límite de 1MB):", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"arch_{fv}")
                     comentarios = st.text_area("Comentarios", key=f"com_{fv}")
                     status_ph = st.empty()
 
@@ -630,14 +630,19 @@ if st.session_state.modo_vista == "Cliente":
                             status_ph.error("❌ Adjunta al menos un archivo.")
                         else:
                             try:
-                                status_ph.info("⏳ Procesando y enviando...")
+                                status_ph.info("⏳ Subiendo archivos pesados a Cloud Storage...")
                                 lista_archivos = []
+                                timestamp_num = int(datetime.now().timestamp())
+                                
                                 for arch in archivos_subidos:
-                                    b64_data = procesar_archivo_subido(arch)
-                                    lista_archivos.append({"nombre": arch.name, "data": b64_data})
+                                    ruta_destino = f"pedidos/{st.session_state.user.strip()}/{timestamp_num}_{arch.name}"
+                                    url_publica = subir_a_firebase_storage(arch, ruta_destino)
+                                    
+                                    if url_publica:
+                                        lista_archivos.append({"nombre": arch.name, "url": url_publica})
 
                                 data_pedido = {
-                                    "id": f"PT-{int(datetime.now().timestamp())}",
+                                    "id": f"PT-{timestamp_num}",
                                     "cliente": st.session_state.user.strip(),
                                     "nombre_proyecto": nombre_proyecto,
                                     "producto": tipo_producto,
@@ -658,23 +663,22 @@ if st.session_state.modo_vista == "Cliente":
                                 st.session_state.expandir_nuevo_pedido = False
                                 st.rerun()
                             except Exception as e:
-                                status_ph.error(f"Error: {e}")
+                                status_ph.error(f"Error al enviar: {e}")
 
                 st.markdown("---")
                 
-                # Renderiza los pedidos con auto-refresco silencioso de 10s
+                # Renderiza las tablas con auto-refresco silencioso
                 renderizar_tablas_cliente(user_clean)
 
         except Exception as e:
             st.error(f"Error: {e}")
 
 # =========================================================
-# 2. VISTA ADMINISTRADOR
+# VISTA ADMINISTRADOR
 # =========================================================
 else:
     st.subheader("🛠️ Administración General")
     try:
-        # Renderiza el panel completo con auto-refresco silencioso de 10s
         renderizar_panel_admin()
     except Exception as e:
         st.error(f"Error en panel admin: {e}")
