@@ -272,16 +272,19 @@ def renderizar_tablas_cliente(user_clean):
                         st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
                         render_estado_badge("Completado")
 
+                        # Obtención directa y limpia de los archivos entregados
                         archivos_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
                         if archivos_finales:
-                            st.markdown("✨ **Archivos Listos para Descarga:**")
+                            st.markdown("✨ **Archivos Entregados para Descarga:**")
                             for idx_f, af in enumerate(archivos_finales):
-                                nom_f = af.get('nombre', 'resultado')
-                                url_f = af.get('url', '')
+                                nom_f = af.get('nombre', f'archivo_{idx_f+1}')
+                                url_f = af.get('url') or af.get('data', '')
                                 if url_f:
-                                    if nom_f.lower().endswith(('png', 'jpg', 'jpeg')):
+                                    if nom_f.lower().endswith(('png', 'jpg', 'jpeg', 'webp')):
                                         st.image(url_f, width=120, caption=nom_f)
-                                    st.markdown(f"📥 [Descargar {nom_f}]({url_f})")
+                                    st.markdown(f"📥 [**Descargar {nom_f}**]({url_f})")
+                        else:
+                            st.warning("⚠️ El pedido está completado, pero no hay archivos cargados aun.")
         else:
             st.info("Aún no tienes pedidos completados.")
 
