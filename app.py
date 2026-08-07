@@ -619,14 +619,71 @@ else:
                                 st.rerun()
 
         with tab_admin_clientes:
-            st.subheader("👥 Clientes Registrados")
+            st.subheader("👥 Gestión de Clientes")
+
+            # --- FORMULARIO PARA REGISTRAR/CREAR UN NUEVO CLIENTE ---
+            with st.expander("➕ Registrar Nuevo Cliente / Usuario", expanded=False):
+                with st.form("form_nuevo_cliente", clear_on_submit=True):
+                    nuevo_id = st.text_input("ID o Usuario único (ej: cliente_01):").strip().lower()
+                    nuevo_nombre = st.text_input("Nombre Completo del Cliente:").strip()
+                    logo_file = st.file_uploader("Logo del Cliente (Opcional):", type=["png", "jpg", "jpeg"])
+                    
+                    btn_registrar = st.form_submit_button("💾 GUARDAR CLIENTE")
+                    
+                    if btn_registrar:
+                        if not nuevo_id or not nuevo_nombre:
+                            st.warning("⚠️ Debes ingresar un ID y un Nombre de cliente.")
+                        else:
+                            try:
+                                logo_b64 = None
+                                if logo_file:
+                                    logo_b64 = procesar_archivo_subido(logo_file)
+                                
+                                db.collection("usuarios_perfil").document(nuevo_id).set({
+                                    "nombre_usuario": nuevo_nombre,
+                                    "logo_b64": logo_b64,
+                                    "creado_en": datetime.now()
+                                }, merge=True)
+                                
+                                st.success(f"✅ Cliente '{nuevo_nombre}' ({nuevo_id}) registrado correctamente.")
+                                st.rerun()
+                            except Exception as err:
+                                st.error(f"Error al guardar cliente: {err}")
+
+            st.markdown("---")
+
+            # --- LISTADO Y EDICIÓN DE CLIENTES ---
             clientes_docs = list(db.collection("usuarios_perfil").stream())
             if clientes_docs:
-                for cdoc in clientes_docs:
+                cols_c = st.columns(3)
+                for i, cdoc in enumerate(clientes_docs):
                     cdata = cdoc.to_dict()
-                    st.text(f"• ID: {cdoc.id} | Nombre: {cdata.get('nombre_usuario', 'Sin Nombre')}")
+                    cid = cdoc.id
+                    cnombre = cdata.get('nombre_usuario', 'Sin Nombre')
+                    clogo = cdata.get('logo_b64')
+
+                    with cols_c[i % 3]:
+                        with st.container(border=True):
+                            col_img, col_txt = st.columns([1, 3])
+                            with col_img:
+                                if clogo:
+                                    try:
+                                        st.image(base64.b64decode(clogo), width=50)
+                                    except Exception:
+                                        st.markdown("👤")
+                                else:
+                                    st.markdown("👤")
+                            
+                            with col_txt:
+                                st.markdown(f"**{cnombre}**")
+                                st.caption(f"ID: `{cid}`")
+
+                            if st.button("🗑️ Eliminar Cliente", key=f"del_cli_{cid}", use_container_width=True):
+                                db.collection("usuarios_perfil").document(cid).delete()
+                                st.success(f"Cliente {cid} eliminado.")
+                                st.rerun()
             else:
-                st.info("No hay perfiles de clientes registrados.")
+                st.info("No hay perfiles de clientes registrados. Utiliza el formulario superior para agregar el primero.")
 
     except Exception as e:
         st.error(f"Error en panel admin: {e}")
