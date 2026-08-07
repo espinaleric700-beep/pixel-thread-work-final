@@ -140,7 +140,7 @@ def obtener_uso_firebase():
         total_docs = len(pedidos) + len(clientes)
         
         limite_lecturas = 50000
-        lecturas_actuales = 45000 
+        lecturas_actuales = min(total_docs * 5, limite_lecturas) 
         porcentaje_uso = min(float(lecturas_actuales) / limite_lecturas * 100, 100.0)
         
         return {
@@ -199,7 +199,8 @@ if "form_version" not in st.session_state:
 def actualizar_url(vista, user):
     st.session_state.modo_vista = vista
     st.session_state.user = user
-    st.query_params.update({"seccion": vista, "user": user})
+    st.query_params["seccion"] = vista
+    st.query_params["user"] = user
     st.rerun()
 
 ADMINS_AUTORIZADOS = ["Pixel2580", "eric"]
@@ -245,9 +246,6 @@ if st.session_state.modo_vista == "Cliente":
         if st.button("🔍 Ingresar", use_container_width=True):
             if user_input != st.session_state.user:
                 actualizar_url("Cliente", user_input)
-
-    if user_input != st.session_state.user and user_input.strip() != "":
-        actualizar_url("Cliente", user_input)
 
     user_clean = st.session_state.user.strip().lower()
 
@@ -520,18 +518,17 @@ else:
                                         try:
                                             status_subida = st.empty()
                                             total_archivos = len(archivos_entregables)
-                                            db.collection("pedidos_bordado").document(doc_id).update({"archivos_finales": []})
                                             
                                             for idx, af in enumerate(archivos_entregables, start=1):
                                                 status_subida.info(f"⏳ Subiendo archivo {idx} de {total_archivos} ({af.name})...")
                                                 b64_fin = procesar_archivo_subido(af)
                                                 lista_finales.append({"nombre": af.name, "data": b64_fin})
                                                 
-                                                db.collection("pedidos_bordado").document(doc_id).update({
-                                                    "archivos_finales": lista_finales,
-                                                    "estado": "Completado",
-                                                    "turno": "N/A"
-                                                })
+                                            db.collection("pedidos_bordado").document(doc_id).update({
+                                                "archivos_finales": lista_finales,
+                                                "estado": "Completado",
+                                                "turno": "N/A"
+                                            })
                                             
                                             recalcular_turnos()
                                             status_subida.success("¡Completado con éxito!")
@@ -599,16 +596,15 @@ else:
                                         try:
                                             status_subida = st.empty()
                                             total_archivos = len(archivos_extra)
-                                            db.collection("pedidos_bordado").document(doc_id).update({"archivos_finales": []})
                                             
                                             for idx, af in enumerate(archivos_extra, start=1):
                                                 status_subida.info(f"⏳ Subiendo archivo {idx} de {total_archivos} ({af.name})...")
                                                 b64_fin = procesar_archivo_subido(af)
                                                 lista_finales.append({"nombre": af.name, "data": b64_fin})
                                                 
-                                                db.collection("pedidos_bordado").document(doc_id).update({
-                                                    "archivos_finales": lista_finales
-                                                })
+                                            db.collection("pedidos_bordado").document(doc_id).update({
+                                                "archivos_finales": lista_finales
+                                            })
                                             
                                             status_subida.success("¡Archivos agregados con éxito!")
                                             st.rerun()
@@ -621,5 +617,16 @@ else:
                                 db.collection("pedidos_bordado").document(doc_id).delete()
                                 recalcular_turnos()
                                 st.rerun()
+
+        with tab_admin_clientes:
+            st.subheader("👥 Clientes Registrados")
+            clientes_docs = list(db.collection("usuarios_perfil").stream())
+            if clientes_docs:
+                for cdoc in clientes_docs:
+                    cdata = cdoc.to_dict()
+                    st.text(f"• ID: {cdoc.id} | Nombre: {cdata.get('nombre_usuario', 'Sin Nombre')}")
+            else:
+                st.info("No hay perfiles de clientes registrados.")
+
     except Exception as e:
         st.error(f"Error en panel admin: {e}")
