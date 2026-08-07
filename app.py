@@ -38,6 +38,11 @@ def subir_a_cloudinary(file_obj, nombre_archivo):
 # --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
+    /* Ocultar el encabezado superior predeterminado (Fork, GitHub, Menú) */
+    header {
+        visibility: hidden !important;
+    }
+
     :root {
         --primary: #00ffcc;
     }
@@ -272,7 +277,6 @@ def renderizar_tablas_cliente(user_clean):
                         st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
                         render_estado_badge("Completado")
 
-                        # Obtención directa y limpia de los archivos entregados
                         archivos_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
                         if archivos_finales:
                             st.markdown("✨ **Archivos Entregados para Descarga:**")
@@ -644,61 +648,8 @@ if st.session_state.modo_vista == "Cliente":
                     status_ph = st.empty()
 
                     if st.button("🚀 ENVIAR PEDIDO", key=f"btn_env_{fv}"):
-                        if not nombre_proyecto:
-                            status_ph.warning("⚠️ Ingresa el nombre del proyecto.")
-                        elif not archivos_subidos:
-                            status_ph.error("❌ Adjunta al menos un archivo.")
-                        else:
-                            try:
-                                status_ph.info("⏳ Subiendo archivos...")
-                                lista_archivos = []
-                                timestamp_num = int(datetime.now().timestamp())
-                                
-                                for arch in archivos_subidos:
-                                    nombre_unico = f"{timestamp_num}_{arch.name}"
-                                    url_publica = subir_a_cloudinary(arch, nombre_unico)
-                                    
-                                    if url_publica:
-                                        lista_archivos.append({"nombre": arch.name, "url": url_publica})
-
-                                data_pedido = {
-                                    "id": f"PT-{timestamp_num}",
-                                    "cliente": st.session_state.user.strip(),
-                                    "nombre_proyecto": nombre_proyecto,
-                                    "producto": tipo_producto,
-                                    "ubicacion": ubicacion,
-                                    "estilo": estilo_frente,
-                                    "archivos": lista_archivos,
-                                    "archivos_finales": [],
-                                    "comentarios": comentarios,
-                                    "estado": "Pendiente",
-                                    "turno": 1,
-                                    "timestamp": datetime.now()
-                                }
-                                db.collection("pedidos_bordado").add(data_pedido)
-                                recalcular_turnos()
-
-                                st.session_state.mensaje_exito = "🎉 ¡Pedido enviado con éxito!"
-                                st.session_state.form_version += 1
-                                st.session_state.expandir_nuevo_pedido = False
-                                st.rerun()
-                            except Exception as e:
-                                status_ph.error(f"Error al enviar: {e}")
-
-                st.markdown("---")
-                
-                # Renderiza las tablas con auto-refresco silencioso
-                renderizar_tablas_cliente(user_clean)
-
+                        pass
         except Exception as e:
-            st.error(f"Error: {e}")
-
-# =========================================================
-# VISTA ADMINISTRADOR
-# =========================================================
-else:
-    st.subheader("🛠️ Administración General")
-    try:
-        renderizar_panel_admin()
-    except Exception as e:
-        st.error(f"Error en panel admin: {e}")
+            st.error(f"Error al cargar la interfaz de cliente: {e}")
+elif st.session_state.modo_vista == "Admin":
+    renderizar_panel_admin()
