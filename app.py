@@ -17,10 +17,7 @@ cloudinary.config(
 )
 
 def subir_a_cloudinary(file_obj, nombre_archivo):
-    """
-    Sube archivos de cualquier tamaño a Cloudinary.
-    Soporta imágenes (.png, .jpg) y archivos de bordado (.emb, .dst, .pes, etc.).
-    """
+    """Sube archivos a Cloudinary."""
     try:
         extension = nombre_archivo.split('.')[-1].lower()
         resource_type = "image" if extension in ["png", "jpg", "jpeg", "webp"] else "raw"
@@ -38,6 +35,11 @@ def subir_a_cloudinary(file_obj, nombre_archivo):
 # --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
+    /* Ocultar la barra superior (Fork, GitHub, Menú) */
+    header {
+        visibility: hidden !important;
+    }
+
     :root {
         --primary: #00ffcc;
     }
@@ -133,11 +135,9 @@ def obtener_uso_firebase():
         pedidos = list(db.collection("pedidos_bordado").stream())
         clientes = list(db.collection("usuarios_perfil").stream())
         total_docs = len(pedidos) + len(clientes)
-        
         limite_lecturas = 50000
         lecturas_actuales = min(total_docs * 5, limite_lecturas) 
         porcentaje_uso = min(float(lecturas_actuales) / limite_lecturas * 100, 100.0)
-        
         return {
             "total_docs": total_docs,
             "lecturas": lecturas_actuales,
@@ -159,7 +159,6 @@ def limpiar_lista_archivos(raw_data):
     return lista_limpia
 
 def vaciar_pedidos():
-    """Elimina únicamente todos los documentos de la colección de pedidos."""
     docs = list(db.collection("pedidos_bordado").stream())
     for doc in docs:
         db.collection("pedidos_bordado").document(doc.id).delete()
@@ -180,9 +179,9 @@ if "form_version" not in st.session_state:
 
 def actualizar_url(vista, user):
     st.session_state.modo_vista = vista
-    st.session_state.user = user
+    st.session_state.user = user.strip()
     st.query_params["seccion"] = vista
-    st.query_params["user"] = user
+    st.query_params["user"] = user.strip()
     st.rerun()
 
 ADMINS_AUTORIZADOS = ["Pixel2580", "eric"]
@@ -208,7 +207,7 @@ with col_head2:
             actualizar_url("Cliente", st.session_state.user)
         if st.button("🛠️ Panel Admin", use_container_width=True): 
             usuario_actual = st.session_state.user.strip()
-            if usuario_actual in ADMINS_AUTORIZADOS:
+            if usuario_actual.lower() in [a.lower() for a in ADMINS_AUTORIZADOS]:
                 actualizar_url("Admin", st.session_state.user)
             else:
                 st.error("❌ Sin permisos.")
@@ -223,7 +222,12 @@ def renderizar_tablas_cliente(user_clean):
     tab_pendientes, tab_completados = st.tabs(["⏳ Pedidos Pendientes", "✅ Pedidos Completados"])
 
     todos = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
-    mis_pedidos = [p.to_dict() for p in todos if p.to_dict().get("cliente", "").strip().lower() == user_clean]
+    
+    # Filtro flexible: insensible a mayúsculas/minúsculas y espacios
+    mis_pedidos = [
+        p.to_dict() for p in todos 
+        if p.to_dict().get("cliente", "").strip().lower() == user_clean
+    ]
 
     with tab_pendientes:
         st.subheader("📋 Pedidos en Proceso")
@@ -251,7 +255,7 @@ def renderizar_tablas_cliente(user_clean):
                                 nombre_a = arch_item.get('nombre', 'archivo')
                                 url_a = arch_item.get('url', '')
                                 if url_a:
-                                    if nombre_a.lower().endswith(('png', 'jpg', 'jpeg')):
+                                    if nombre_a.lower().endswith(('png', 'jpg', 'jpeg', 'webp')):
                                         st.image(url_a, width=120, caption=nombre_a)
                                     st.markdown(f"📥 [Descargar {nombre_a}]({url_a})")
         else:
@@ -272,7 +276,6 @@ def renderizar_tablas_cliente(user_clean):
                         st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
                         render_estado_badge("Completado")
 
-                        # Obtención directa y limpia de los archivos entregados
                         archivos_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
                         if archivos_finales:
                             st.markdown("✨ **Archivos Entregados para Descarga:**")
@@ -284,7 +287,7 @@ def renderizar_tablas_cliente(user_clean):
                                         st.image(url_f, width=120, caption=nom_f)
                                     st.markdown(f"📥 [**Descargar {nom_f}**]({url_f})")
                         else:
-                            st.warning("⚠️ El pedido está completado, pero no hay archivos cargados aun.")
+                            st.warning("⚠️ El pedido está completado, pero no hay archivos cargados aún.")
         else:
             st.info("Aún no tienes pedidos completados.")
 
@@ -528,7 +531,6 @@ def renderizar_panel_admin():
                         except Exception as err:
                             st.error(f"Error al guardar cliente: {err}")
 
-        # --- SECCIÓN PARA VACIAR SOLAMENTE LOS PEDIDOS ---
         with st.expander("⚠️ ELIMINAR PEDIDOS (Conservar Clientes)", expanded=False):
             st.warning("Esta opción eliminará TODOS los pedidos y sus archivos de la base de datos para liberar espacio. Los perfiles de clientes SE MANTENDRÁN intactos.")
             confirmacion = st.checkbox("Entiendo que se borrará el historial completo de pedidos.")
@@ -588,7 +590,7 @@ if st.session_state.modo_vista == "Cliente":
 
     with col_user_2:
         if st.button("🔍 Ingresar", use_container_width=True):
-            if user_input != st.session_state.user:
+            if user_input.strip() != st.session_state.user:
                 actualizar_url("Cliente", user_input)
 
     user_clean = st.session_state.user.strip().lower()
@@ -600,7 +602,9 @@ if st.session_state.modo_vista == "Cliente":
             user_doc_ref = db.collection("usuarios_perfil").document(user_clean)
             user_doc = user_doc_ref.get()
             
-            if not user_doc.exists and user_clean not in [adm.lower() for adm in ADMINS_AUTORIZADOS]:
+            is_admin = user_clean in [adm.lower() for adm in ADMINS_AUTORIZADOS]
+
+            if not user_doc.exists and not is_admin:
                 st.error("❌ El usuario ingresado no existe o no está registrado en el sistema. Por favor, verifica tu ID.")
             else:
                 nombre_cliente = st.session_state.user
@@ -629,76 +633,62 @@ if st.session_state.modo_vista == "Cliente":
                 st.markdown("---")
                 fv = st.session_state.form_version
 
+                # --- FORMULARIO DE ENVÍO DE PEDIDO ---
                 with st.expander("➕ Enviar Nuevo Pedido", expanded=st.session_state.expandir_nuevo_pedido):
                     tipo_producto = st.radio("Tipo de Producto:", ["GORRA", "TELA", "VARIOS"], horizontal=True, key=f"prod_{fv}")
-                    ubicacion, estilo_frente = "N/A", "N/A"
+                    ubicacion, estilo_frente = "N/A", "PLANO"
 
                     if tipo_producto == "GORRA":
                         ubicacion = st.radio("Ubicación:", ["FRENTE", "TRASERO", "LATERAL"], horizontal=True, key=f"ubi_{fv}")
-                        if ubicacion == "FRENTE":
-                            estilo_frente = st.radio("Estilo:", ["PLANO"], horizontal=True, key=f"est_{fv}")
+                        estilo_frente = st.radio("Estilo:", ["PLANO"], horizontal=True, key=f"est_{fv}")
 
                     nombre_proyecto = st.text_input("Nombre del Proyecto", key=f"nom_{fv}")
-                    archivos_subidos = st.file_uploader("Archivos (Sin límite de 1MB):", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"arch_{fv}")
+                    archivos_subidos = st.file_uploader("Archivos (Imágenes o vectores):", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"arch_{fv}")
                     comentarios = st.text_area("Comentarios", key=f"com_{fv}")
                     status_ph = st.empty()
 
                     if st.button("🚀 ENVIAR PEDIDO", key=f"btn_env_{fv}"):
                         if not nombre_proyecto:
-                            status_ph.warning("⚠️ Ingresa el nombre del proyecto.")
-                        elif not archivos_subidos:
-                            status_ph.error("❌ Adjunta al menos un archivo.")
+                            status_ph.warning("⚠️ Debes asignar un nombre al proyecto.")
                         else:
                             try:
-                                status_ph.info("⏳ Subiendo archivos...")
-                                lista_archivos = []
+                                status_ph.info("⏳ Guardando pedido...")
+                                lista_archivos_guardados = []
                                 timestamp_num = int(datetime.now().timestamp())
-                                
-                                for arch in archivos_subidos:
-                                    nombre_unico = f"{timestamp_num}_{arch.name}"
-                                    url_publica = subir_a_cloudinary(arch, nombre_unico)
-                                    
-                                    if url_publica:
-                                        lista_archivos.append({"nombre": arch.name, "url": url_publica})
 
-                                data_pedido = {
-                                    "id": f"PT-{timestamp_num}",
-                                    "cliente": st.session_state.user.strip(),
+                                if archivos_subidos:
+                                    for arch in archivos_subidos:
+                                        nom_file = f"cliente_{user_clean}_{timestamp_num}_{arch.name}"
+                                        url_c = subir_a_cloudinary(arch, nom_file)
+                                        if url_c:
+                                            lista_archivos_guardados.append({"nombre": arch.name, "url": url_c})
+
+                                # Guardar en Firestore
+                                db.collection("pedidos_bordado").add({
+                                    "cliente": user_clean,
                                     "nombre_proyecto": nombre_proyecto,
                                     "producto": tipo_producto,
                                     "ubicacion": ubicacion,
                                     "estilo": estilo_frente,
-                                    "archivos": lista_archivos,
-                                    "archivos_finales": [],
                                     "comentarios": comentarios,
+                                    "archivos": lista_archivos_guardados,
+                                    "archivos_finales": [],
                                     "estado": "Pendiente",
-                                    "turno": 1,
                                     "timestamp": datetime.now()
-                                }
-                                db.collection("pedidos_bordado").add(data_pedido)
+                                })
+
                                 recalcular_turnos()
-
-                                st.session_state.mensaje_exito = "🎉 ¡Pedido enviado con éxito!"
+                                st.session_state.mensaje_exito = "🎉 ¡Pedido enviado correctamente!"
                                 st.session_state.form_version += 1
-                                st.session_state.expandir_nuevo_pedido = False
                                 st.rerun()
-                            except Exception as e:
-                                status_ph.error(f"Error al enviar: {e}")
+                            except Exception as err_envio:
+                                status_ph.error(f"Error al enviar pedido: {err_envio}")
 
-                st.markdown("---")
-                
-                # Renderiza las tablas con auto-refresco silencioso
+                # --- TABLAS DE PEDIDOS PENDIENTES Y COMPLETADOS ---
                 renderizar_tablas_cliente(user_clean)
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error al cargar la interfaz de cliente: {e}")
 
-# =========================================================
-# VISTA ADMINISTRADOR
-# =========================================================
-else:
-    st.subheader("🛠️ Administración General")
-    try:
-        renderizar_panel_admin()
-    except Exception as e:
-        st.error(f"Error en panel admin: {e}")
+elif st.session_state.modo_vista == "Admin":
+    renderizar_panel_admin()
