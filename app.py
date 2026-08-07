@@ -225,28 +225,31 @@ def renderizar_tablas_cliente(user_clean):
     todos = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
     
     mis_pedidos = [
-        p.to_dict() for p in todos 
+        (p.id, p.to_dict()) for p in todos 
         if p.to_dict().get("cliente", "").strip().lower() == user_clean
     ]
 
     with tab_pendientes:
         st.subheader("📋 Pedidos en Proceso")
-        pedidos_activos = [p for p in mis_pedidos if p.get('estado') != "Completado"]
+        pedidos_activos = [(doc_id, p) for doc_id, p in mis_pedidos if p.get('estado') != "Completado"]
         
         if pedidos_activos:
             for i in range(0, len(pedidos_activos), 4):
                 cols = st.columns(4)
                 grupo = pedidos_activos[i:i+4]
-                for j, p in enumerate(grupo):
+                for j, (doc_id, p) in enumerate(grupo):
                     with cols[j]:
                         with st.container(border=True):
                             turno_val = p.get('turno', 'N/A')
+                            estado_curr = p.get('estado', 'Pendiente')
+                            
                             st.markdown(f"**🔢 Turno en Cola:** `#{turno_val}`")
                             st.markdown(f"**🧵 Proyecto:** {p.get('nombre_proyecto', 'N/A')}")
                             st.markdown(f"**📦 Producto:** {p.get('producto', 'N/A')}")
                             st.markdown(f"**📍 Ubicación:** {p.get('ubicacion', 'N/A')}")
                             st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
-                            render_estado_badge(p.get('estado', 'Pendiente'))
+                            render_estado_badge(estado_curr)
+                            
                             if p.get('comentarios'):
                                 st.caption(f"📝 Nota: {p.get('comentarios')}")
 
@@ -260,18 +263,62 @@ def renderizar_tablas_cliente(user_clean):
                                         if nombre_a.lower().endswith(('png', 'jpg', 'jpeg', 'webp')):
                                             st.image(url_a, width=120, caption=nombre_a)
                                         st.markdown(f"📥 [Descargar {nombre_a}]({url_a})")
+
+                            # --- OPCIONES DE MODIFICAR Y ELIMINAR ---
+                            st.markdown("---")
+                            if estado_curr == "Pendiente":
+                                with st.expander("✏️ Editar Pedido"):
+                                    nuevo_nombre = st.text_input("Proyecto:", value=p.get('nombre_proyecto', ''), key=f"edit_nom_{doc_id}")
+                                    nuevo_prod = st.radio("Producto:", ["GORRA", "TELA", "VARIOS"], index=["GORRA", "TELA", "VARIOS"].index(p.get('producto', 'GORRA')) if p.get('producto') in ["GORRA", "TELA", "VARIOS"] else 0, key=f"edit_prod_{doc_id}")
+                                    
+                                    nueva_ubi = "N/A"
+                                    nuevo_estilo = "PLANO"
+                                    if nuevo_prod == "GORRA":
+                                        nueva_ubi = st.radio("Ubicación:", ["FRENTE", "TRASERO", "LATERAL"], index=["FRENTE", "TRASERO", "LATERAL"].index(p.get('ubicacion', 'FRENTE')) if p.get('ubicacion') in ["FRENTE", "TRASERO", "LATERAL"] else 0, key=f"edit_ubi_{doc_id}")
+                                        nuevo_estilo = "PLANO"
+                                        
+                                    nuevos_comentarios = st.text_area("Comentarios:", value=p.get('comentarios', ''), key=f"edit_com_{doc_id}")
+                                    nuevos_archivos = st.file_uploader("Agregar más archivos:", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"edit_arch_{doc_id}")
+
+                                    if st.button("💾 Guardar Cambios", key=f"btn_save_{doc_id}", use_container_width=True):
+                                        lista_arch = p.get('archivos', [])
+                                        if nuevos_archivos:
+                                            ts = int(datetime.now().timestamp())
+                                            for na in nuevos_archivos:
+                                                u_url = subir_a_cloudinary(na, f"edit_{doc_id}_{ts}_{na.name}")
+                                                if u_url:
+                                                    lista_arch.append({"nombre": na.name, "url": u_url})
+
+                                        db.collection("pedidos_bordado").document(doc_id).update({
+                                            "nombre_proyecto": nuevo_nombre,
+                                            "producto": nuevo_prod,
+                                            "ubicacion": nueva_ubi,
+                                            "estilo": nuevo_estilo,
+                                            "comentarios": nuevos_comentarios,
+                                            "archivos": lista_arch
+                                        })
+                                        st.success("¡Pedido actualizado!")
+                                        st.rerun()
+
+                                if st.button("🗑️ Eliminar Pedido", key=f"cli_del_{doc_id}", use_container_width=True):
+                                    db.collection("pedidos_bordado").document(doc_id).delete()
+                                    recalcular_turnos()
+                                    st.success("Pedido eliminado correctamente.")
+                                    st.rerun()
+                            else:
+                                st.caption("🔒 *El pedido ya está en proceso o en producción, por lo que no se puede modificar ni eliminar.*")
         else:
             st.info("No tienes pedidos pendientes activos.")
 
     with tab_completados:
         st.subheader("🎉 Historial de Pedidos Listos")
-        pedidos_terminados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
+        pedidos_terminados = [(doc_id, p) for doc_id, p in mis_pedidos if p.get('estado') == "Completado"]
 
         if pedidos_terminados:
             for i in range(0, len(pedidos_terminados), 4):
                 cols = st.columns(4)
                 grupo = pedidos_terminados[i:i+4]
-                for j, p in enumerate(grupo):
+                for j, (doc_id, p) in enumerate(grupo):
                     with cols[j]:
                         with st.container(border=True):
                             st.markdown(f"**🧵 Proyecto:** {p.get('nombre_proyecto', 'N/A')}")
@@ -658,6 +705,42 @@ else:
                     archivos_subidos = st.file_uploader("Archivos (Imágenes o vectores):", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"arch_{fv}")
                     comentarios = st.text_area("Comentarios", key=f"com_{fv}")
                     status_ph = st.empty()
+
+                    if st.button("🚀 ENVIAR PEDIDO", use_container_width=True, key=f"btn_send_{fv}"):
+                        if not nombre_proyecto:
+                            status_ph.warning("⚠️ Escribe el nombre del proyecto.")
+                        else:
+                            try:
+                                status_ph.info("⏳ Subiendo archivos y registrando pedido...")
+                                archivos_urls = []
+                                ts = int(datetime.now().timestamp())
+                                
+                                if archivos_subidos:
+                                    for arch in archivos_subidos:
+                                        nom_u = f"cliente_{user_clean}_{ts}_{arch.name}"
+                                        url_u = subir_a_cloudinary(arch, nom_u)
+                                        if url_u:
+                                            archivos_urls.append({"nombre": arch.name, "url": url_u})
+
+                                db.collection("pedidos_bordado").add({
+                                    "cliente": user_clean,
+                                    "nombre_proyecto": nombre_proyecto,
+                                    "producto": tipo_producto,
+                                    "ubicacion": ubicacion,
+                                    "estilo": estilo_frente,
+                                    "comentarios": comentarios,
+                                    "archivos": archivos_urls,
+                                    "archivos_finales": [],
+                                    "estado": "Pendiente",
+                                    "timestamp": datetime.now()
+                                })
+
+                                recalcular_turnos()
+                                st.session_state.mensaje_exito = "¡Pedido enviado con éxito!"
+                                st.session_state.form_version += 1
+                                st.rerun()
+                            except Exception as err:
+                                status_ph.error(f"Error al guardar: {err}")
 
                 renderizar_tablas_cliente(user_clean)
 
