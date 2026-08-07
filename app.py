@@ -35,8 +35,9 @@ def subir_a_cloudinary(file_obj, nombre_archivo):
 # --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
-    /* Ocultar la barra superior (Fork, GitHub, Menú) */
-    header {
+    /* Ocultar por completo la barra superior, perfil, menú y botones flotantes */
+    [data-testid="stHeader"], .stAppToolbar, header {
+        display: none !important;
         visibility: hidden !important;
     }
 
@@ -223,7 +224,6 @@ def renderizar_tablas_cliente(user_clean):
 
     todos = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
     
-    # Filtro flexible: insensible a mayúsculas/minúsculas y espacios
     mis_pedidos = [
         p.to_dict() for p in todos 
         if p.to_dict().get("cliente", "").strip().lower() == user_clean
