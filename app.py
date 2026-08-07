@@ -9,6 +9,16 @@ from PIL import Image
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Pixel Thread | Pro", layout="wide")
 
+# Configuración de credenciales / variables de proyecto
+FIREBASE_CONFIG = {
+    "apiKey": "AIzaSyDrWx2J8IV0TztncQAiFMyrjbCTOXDzCYU",
+    "authDomain": "arlenylee-6332cdca.firebaseapp.com",
+    "projectId": "arlenylee-6332cdca",
+    "storageBucket": "arlenylee-6332cdca.firebasestorage.app",
+    "messagingSenderId": "1084869559489",
+    "appId": "1:1084869559489:web:780de53660fcdc447f0040"
+}
+
 # --- CSS LIMPIO, SIN LÍNEAS ANIDADAS, LETRAS MÁS GRANDES Y FONDO ORIGINAL ---
 st.markdown("""
 <style>
@@ -99,7 +109,9 @@ def init_fb():
     if not firebase_admin._apps:
         cred_dict = dict(st.secrets["firebase"])
         cred = credentials.Certificate(cred_dict)
-        firebase_admin.initialize_app(cred)
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': FIREBASE_CONFIG["storageBucket"]
+        })
     return firestore.client()
 
 db = init_fb()
@@ -609,71 +621,5 @@ else:
                                 db.collection("pedidos_bordado").document(doc_id).delete()
                                 recalcular_turnos()
                                 st.rerun()
-            else:
-                st.info("🎉 No hay pedidos completados actualmente.")
-
-        with tab_admin_clientes:
-            st.subheader("👥 Registro y Administración de Clientes")
-            
-            with st.form("form_nuevo_cliente"):
-                st.markdown("#### Registrar Nuevo Cliente o Actualizar Perfil")
-                nuevo_id = st.text_input("ID de Usuario (Único, sin espacios, ej: cliente1)").strip().lower()
-                nombre_usuario = st.text_input("Nombre Completo o Comercial del Cliente").strip()
-                logo_subido = st.file_uploader("Logo del Cliente (Opcional)", type=["png", "jpg", "jpeg"])
-                
-                submitted = st.form_submit_button("💾 Guardar Cliente")
-                if submitted:
-                    if not nuevo_id or not nombre_usuario:
-                        st.error("⚠️ El ID de usuario y el nombre son obligatorios.")
-                    else:
-                        try:
-                            logo_b64 = None
-                            if logo_subido:
-                                logo_b64 = procesar_archivo_subido(logo_subido)
-                            
-                            db.collection("usuarios_perfil").document(nuevo_id).set({
-                                "id_usuario": nuevo_id,
-                                "nombre_usuario": nombre_usuario,
-                                "logo_b64": logo_b64,
-                                "timestamp": datetime.now()
-                            }, merge=True)
-                            
-                            st.success(f"🎉 Cliente '{nombre_usuario}' guardado correctamente con ID: '{nuevo_id}'.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al guardar cliente: {e}")
-
-            st.markdown("---")
-            st.markdown("#### Clientes Registrados en el Sistema")
-            clientes_docs = list(db.collection("usuarios_perfil").stream())
-            
-            if clientes_docs:
-                for c_doc in clientes_docs:
-                    c_data = c_doc.to_dict()
-                    c_id = c_data.get("id_usuario", c_doc.id)
-                    c_nombre = c_data.get("nombre_usuario", "Sin nombre")
-                    c_logo = c_data.get("logo_b64", None)
-                    
-                    with st.container(border=True):
-                        col_cl1, col_cl2, col_cl3 = st.columns([1, 4, 2])
-                        with col_cl1:
-                            if c_logo:
-                                try:
-                                    st.image(base64.b64decode(c_logo), width=60)
-                                except Exception:
-                                    st.markdown("👤")
-                            else:
-                                st.markdown("👤")
-                        with col_cl2:
-                            st.markdown(f"**Nombre:** {c_nombre}")
-                            st.markdown(f"**ID de Acceso:** `{c_id}`")
-                        with col_cl3:
-                            if st.button("🗑️ Eliminar Cliente", key=f"del_cli_{c_id}", use_container_width=True):
-                                db.collection("usuarios_perfil").document(c_doc.id).delete()
-                                st.success(f"Cliente {c_id} eliminado.")
-                                st.rerun()
-            else:
-                st.info("No hay clientes registrados en la base de datos.")
-
     except Exception as e:
-        st.error(f"Error en panel de administración: {e}")
+        st.error(f"Error en panel admin: {e}")
