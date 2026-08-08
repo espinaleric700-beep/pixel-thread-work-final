@@ -192,6 +192,68 @@ st.markdown("<br>", unsafe_allow_html=True)
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_tablas_cliente(user_clean):
+    if st.session_state.mensaje_exito:
+        st.success(st.session_state.mensaje_exito)
+        st.session_state.mensaje_exito = ""
+
+    # --- FORMULARIO NUEVO PEDIDO ---
+    with st.expander("➕ NUEVO PEDIDO / ENVIAR LOGO", expanded=st.session_state.expandir_nuevo_pedido):
+        v = st.session_state.form_version
+        with st.form(f"form_nuevo_pedido_{v}", clear_on_submit=True):
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                nombre_proy = st.text_input("Nombre del Proyecto / Logo:", key=f"np_nom_{v}").strip()
+                tipo_prod = st.radio("Producto a Bordar:", ["GORRA", "TELA", "VARIOS"], key=f"np_prod_{v}")
+            
+            with col_f2:
+                ubicacion_val = "N/A"
+                if tipo_prod == "GORRA":
+                    ubicacion_val = st.radio("Ubicación en Gorra:", ["FRENTE", "TRASERO", "LATERAL"], key=f"np_ubi_{v}")
+                estilo_val = st.radio("Estilo de Bordado:", ["PLANO", "3D / PUFFY"], key=f"np_est_{v}")
+
+            comentarios_val = st.text_area("Comentarios / Indicaciones adicionales:", key=f"np_com_{v}")
+            archivos_subidos = st.file_uploader("Adjuntar Archivos (Imágenes, PDF, Bordados, etc):", accept_multiple_files=True, key=f"np_arch_{v}")
+
+            btn_crear = st.form_submit_button("🚀 ENVIAR PEDIDO", use_container_width=True)
+
+            if btn_crear:
+                if not nombre_proy:
+                    st.error("⚠️ El nombre del proyecto es obligatorio.")
+                elif not user_clean:
+                    st.error("⚠️ Usuario no identificado en el sistema.")
+                else:
+                    try:
+                        lista_archivos_guardar = []
+                        if archivos_subidos:
+                            ts = int(datetime.now().timestamp())
+                            for fa in archivos_subidos:
+                                url_u = subir_a_cloudinary(fa, f"{user_clean}_{ts}_{fa.name}")
+                                if url_u:
+                                    lista_archivos_guardar.append({"nombre": fa.name, "url": url_u})
+
+                        nuevo_doc = {
+                            "cliente": user_clean,
+                            "nombre_proyecto": nombre_proy,
+                            "producto": tipo_prod,
+                            "ubicacion": ubicacion_val,
+                            "estilo": estilo_val,
+                            "comentarios": comentarios_val,
+                            "estado": "Pendiente",
+                            "timestamp": datetime.now().isoformat(),
+                            "archivos": lista_archivos_guardar,
+                            "archivos_finales": []
+                        }
+
+                        supabase.table("pedidos_bordado").insert(nuevo_doc).execute()
+                        recalcular_turnos()
+
+                        st.session_state.mensaje_exito = f"✅ ¡Pedido '{nombre_proy}' enviado exitosamente!"
+                        st.session_state.expandir_nuevo_pedido = False
+                        st.session_state.form_version += 1
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Error al enviar el pedido: {err}")
+
     # Consulta solo los pedidos del cliente
     res = supabase.table("pedidos_bordado").select("*").eq("cliente", user_clean).order("timestamp").execute()
     mis_pedidos = res.data or []
