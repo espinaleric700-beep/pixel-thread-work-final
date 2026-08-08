@@ -8,24 +8,22 @@ st.set_page_config(page_title="Pixel Thread - Nueva Orden", page_icon="📦", la
 @st.cache_resource
 def init_supabase() -> Client:
     try:
-        # Lectura correcta respetando la sección [supabase] del archivo TOML
         url = st.secrets["supabase"]["URL"]
         key = st.secrets["supabase"]["KEY"]
         return create_client(url, key)
     except KeyError as e:
-        st.error(f"Error de lectura en Secrets: No se encontró la clave {e} dentro de [supabase].")
+        st.error(f"⚠️ Error de configuración: Falta la clave {e} en la sección [supabase] de Secrets.")
         st.stop()
 
 supabase = init_supabase()
 
-# --- OBTENER CLIENTES Y PRECIOS ---
-@st.cache_data(ttl=60)
+# --- OBTENER CLIENTES ---
 def obtener_clientes():
     try:
         res = supabase.table("clientes").select("id, nombre, precio_defecto").execute()
         return res.data if res.data else []
-    except Exception as e:
-        st.error(f"Error al conectar con la tabla 'clientes': {e}")
+    except Exception:
+        # Retorna lista vacía si la tabla no existe o falla la consulta
         return []
 
 # --- INTERFAZ PRINCIPAL ---
@@ -33,45 +31,51 @@ st.title("📦 Crear Nueva Orden - Pixel Thread")
 
 clientes = obtener_clientes()
 
-if not clientes:
-    st.warning("No hay clientes registrados en la base de datos. Agrégalos en el módulo de Gestión de Clientes.")
-else:
-    mapa_clientes = {c["nombre"]: c for c in clientes}
-
-    with st.form("form_nueva_orden", clear_on_submit=True):
-        # Seleccionar el cliente
+with st.form("form_nueva_orden", clear_on_submit=True):
+    # Selección o ingreso de cliente
+    if clientes:
+        mapa_clientes = {c["nombre"]: c for c in clientes}
         cliente_nombre = st.selectbox("Seleccionar Cliente", list(mapa_clientes.keys()))
         cliente_data = mapa_clientes[cliente_nombre]
-
-        # Obtener automáticamente el precio pre-establecido desde Gestión de Clientes
         precio_asignado = float(cliente_data.get("precio_defecto", 0.0))
+        cliente_id = cliente_data["id"]
+    else:
+        st.warning("⚠️ No se detectó la tabla 'clientes' en Supabase. Puedes ingresar el cliente manualmente:")
+        cliente_nombre = st.text_input("Nombre del Cliente")
+        precio_asignado = 0.0
+        cliente_id = None
 
-        # Campos de la orden
-        nombre_logo = st.text_input("Nombre del Logo / Arte")
-        archivo = st.file_uploader("Cargar Archivo de Bordado", type=["png", "jpg", "dst", "pes", "emb"])
-        notas = st.text_area("Instrucciones o Notas", placeholder="Medidas, tipo de tela, observaciones...")
+    # Campos de la orden
+    nombre_logo = st.text_input("Nombre del Logo / Arte")
+    archivo = st.file_uploader("Cargar Archivo de Bordado", type=["png", "jpg", "dst", "pes", "emb"])
+    notas = st.text_area("Instrucciones o Notas", placeholder="Medidas, tipo de tela, observaciones...")
 
-        # Muestra informativa del precio fijado sin campo editable ni expander
-        st.info(f"💵 **Precio asignado automáticamente:** ${precio_asignado:.2f} USD")
+    # Muestra informativa del precio pre-configurado
+    if cliente_id:
+        st.info(f"💵 **Precio configurado para este cliente:** ${precio_asignado:.2f} USD")
 
-        submit = st.form_submit_button("Guardar Orden")
+    submit = st.form_submit_button("Guardar Orden")
 
-    # --- GUARDAR EN BASE DE DATOS ---
-    if submit:
-        if not nombre_logo.strip():
-            st.error("Por favor ingresa el nombre del logo.")
-        else:
-            with st.spinner("Guardando orden..."):
-                try:
-                    nueva_orden = {
-                        "cliente_id": cliente_data["id"],
-                        "nombre_logo": nombre_logo,
-                        "precio": precio_asignado,  # Se asigna el valor de Gestión de Clientes
-                        "notas": notas,
-                        "estado": "Pendiente"
-                    }
-                    
-                    supabase.table("ordenes").insert(nueva_orden).execute()
-                    st.success(f"✅ ¡Orden '{nombre_logo}' guardada con éxito por ${precio_asignado:.2f} USD!")
-                except Exception as e:
-                    st.error(f"Error al registrar la orden en Supabase: {e}")
+# --- PROCESAMIENTO Y GUARDADO ---
+if submit:
+    if not nombre_logo.strip():
+        st.error("Por favor ingresa el nombre del logo.")
+    elif not cliente_nombre:
+        st.error("Por favor especifica un cliente.")
+    else:
+        with st.spinner("Guardando orden..."):
+            try:
+                nueva_orden = {
+                    "nombre_logo": nombre_logo,
+                    "precio": precio_asignado,
+                    "notas": notas,
+                    "estado": "Pendiente"
+                }
+                
+                if cliente_id:
+                    nueva_orden["cliente_id"] = cliente_id
+
+                supabase.table("ordenes").insert(nueva_orden).execute()
+                st.success(f"✅ ¡Orden '{nombre_logo}' guardada con éxito!")
+            except Exception as e:
+                st.error(f"Error al registrar la orden en la base de datos: {e}")
