@@ -42,9 +42,9 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# --- GENERADOR DE FACTURAS EN PDF ---
-def crear_pdf_factura(pedido, cliente_nombre, precio):
-    """Genera un archivo PDF estructurado de factura/recibo en memoria."""
+# --- GENERADOR DE FACTURAS COMPLETA EN PDF ---
+def crear_pdf_factura_completa(pedidos_completados, cliente_nombre, total_monto):
+    """Genera una factura/resumen de cobro con todos los pedidos completados."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -61,58 +61,40 @@ def crear_pdf_factura(pedido, cliente_nombre, precio):
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(5)
     
-    # Datos de la Factura
+    # Datos del Cliente y Fecha
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     pdf.set_font("Helvetica", "B", 12)
-    doc_id = str(pedido.get('id', '000'))
-    pdf.cell(0, 8, f"FACTURA DE SERVICIO / RECIBO #{doc_id}", ln=True)
+    pdf.cell(0, 8, "FACTURA DE SERVICIOS - ESTADO DE CUENTA", ln=True)
     pdf.set_font("Helvetica", "", 10)
-    
-    fecha = str(pedido.get('timestamp', ''))[:10]
-    
     pdf.cell(100, 6, f"Cliente: {cliente_nombre}", ln=False)
-    pdf.cell(0, 6, f"Fecha: {fecha}", ln=True)
-    pdf.cell(100, 6, f"ID Usuario: {pedido.get('cliente', 'N/A')}", ln=True)
-    pdf.ln(5)
+    pdf.cell(0, 6, f"Fecha Emision: {fecha_hoy}", ln=True)
+    pdf.ln(6)
     
-    # Detalle del Pedido
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, "Detalle del Pedido:", ln=True)
-    
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(50, 6, "Proyecto:", border=0)
-    pdf.cell(0, 6, str(pedido.get('nombre_proyecto', 'N/A')), border=0, ln=True)
-    
-    pdf.cell(50, 6, "Producto:", border=0)
-    pdf.cell(0, 6, str(pedido.get('producto', 'N/A')), border=0, ln=True)
-    
-    pdf.cell(50, 6, "Ubicacion:", border=0)
-    pdf.cell(0, 6, str(pedido.get('ubicacion', 'N/A')), border=0, ln=True)
-    
-    pdf.cell(50, 6, "Estilo:", border=0)
-    pdf.cell(0, 6, str(pedido.get('estilo', 'N/A')), border=0, ln=True)
-    
-    if pedido.get('comentarios'):
-        pdf.cell(50, 6, "Notas:", border=0)
-        pdf.cell(0, 6, str(pedido.get('comentarios', '')), border=0, ln=True)
-        
-    pdf.ln(8)
-    
-    # Tabla de Precios
+    # Tabla de Detalle
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(130, 8, "Concepto", border=1, align="L")
-    pdf.cell(50, 8, "Monto", border=1, align="R", ln=True)
+    pdf.cell(20, 8, "ID", border=1, align="C")
+    pdf.cell(90, 8, "Proyecto / Descripción", border=1, align="L")
+    pdf.cell(40, 8, "Producto", border=1, align="C")
+    pdf.cell(30, 8, "Precio", border=1, align="R", ln=True)
     
-    pdf.set_font("Helvetica", "", 10)
-    concepto = f"Digitalizacion de Bordado - {pedido.get('nombre_proyecto', 'Logo')}"
-    pdf.cell(130, 8, concepto, border=1, align="L")
-    pdf.cell(50, 8, f"${precio:.2f}", border=1, align="R", ln=True)
-    
-    # Total
+    pdf.set_font("Helvetica", "", 9)
+    for p in pedidos_completados:
+        doc_id = str(p.get("id", ""))
+        nombre_p = str(p.get("nombre_proyecto", "Logo"))[:40]
+        prod_p = str(p.get("producto", "VARIOS"))
+        precio_p = float(p.get("precio", 0.0) or 0.0)
+        
+        pdf.cell(20, 7, f"#{doc_id}", border=1, align="C")
+        pdf.cell(90, 7, nombre_p, border=1, align="L")
+        pdf.cell(40, 7, prod_p, border=1, align="C")
+        pdf.cell(30, 7, f"${precio_p:.2f}", border=1, align="R", ln=True)
+        
+    # Total Final
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(130, 8, "TOTAL A PAGAR", border=1, align="R")
-    pdf.cell(50, 8, f"${precio:.2f}", border=1, align="R", ln=True)
+    pdf.cell(150, 8, "TOTAL GENERADO A PAGAR:", border=1, align="R")
+    pdf.cell(30, 8, f"${total_monto:.2f}", border=1, align="R", ln=True)
     
-    pdf.ln(15)
+    pdf.ln(12)
     pdf.set_font("Helvetica", "I", 9)
     pdf.cell(0, 5, "Gracias por su preferencia - Pixel Thread", ln=True, align="C")
     
@@ -273,7 +255,11 @@ st.markdown("<br>", unsafe_allow_html=True)
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_tablas_cliente(user_clean):
-    tab_pendientes, tab_completados = st.tabs(["⏳ Pedidos Pendientes", "✅ Pedidos Completados"])
+    tab_pendientes, tab_completados, tab_factura = st.tabs([
+        "⏳ Pedidos Pendientes", 
+        "✅ Pedidos Completados", 
+        "🧾 Generar Factura"
+    ])
 
     res = supabase.table("pedidos_bordado").select("*").eq("cliente", user_clean).order("timestamp").execute()
     mis_pedidos = res.data or []
@@ -301,7 +287,7 @@ def renderizar_tablas_cliente(user_clean):
                             st.markdown(f"**📍 Ubicación:** {p.get('ubicacion', 'N/A')}")
                             st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
                             if precio_val > 0:
-                                st.markdown(f"**💵 Total:** `${precio_val:.2f}`")
+                                st.markdown(f"**💵 Precio Asignado:** `${precio_val:.2f}`")
                             render_estado_badge(estado_curr)
                             
                             if p.get('comentarios'):
@@ -318,7 +304,6 @@ def renderizar_tablas_cliente(user_clean):
                                             st.image(url_a, width=120, caption=nombre_a)
                                         st.markdown(f"📥 [Descargar {nombre_a}]({url_a})")
 
-                            # --- OPCIONES DE MODIFICAR Y ELIMINAR ---
                             st.markdown("---")
                             if estado_curr == "Pendiente":
                                 with st.expander("✏️ Editar Pedido"):
@@ -376,7 +361,7 @@ def renderizar_tablas_cliente(user_clean):
                                     st.success("Pedido eliminado correctamente.")
                                     st.rerun()
                             else:
-                                st.caption("🔒 *El pedido está en proceso o producción y no se puede modificar.*")
+                                st.caption("🔒 *El pedido está en proceso y no se puede modificar.*")
         else:
             st.info("No tienes pedidos pendientes activos.")
 
@@ -399,7 +384,7 @@ def renderizar_tablas_cliente(user_clean):
                             st.markdown(f"**📍 Ubicación:** {p.get('ubicacion', 'N/A')}")
                             st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
                             if precio_val > 0:
-                                st.markdown(f"**💵 Total:** `${precio_val:.2f}`")
+                                st.markdown(f"**💵 Precio:** `${precio_val:.2f}`")
                             render_estado_badge("Completado")
 
                             archivos_finales = limpiar_lista_archivos(p.get('archivos_finales', []))
@@ -414,21 +399,45 @@ def renderizar_tablas_cliente(user_clean):
                                         st.markdown(f"📥 [**Descargar {nom_f}**]({url_f})")
                             else:
                                 st.warning("⚠️ Sin archivos cargados aún.")
-                            
-                            # Botón de Descarga de Factura para el Cliente
-                            if precio_val > 0:
-                                st.markdown("---")
-                                pdf_b = crear_pdf_factura(p, user_clean, precio_val)
-                                st.download_button(
-                                    label="📄 Descargar Factura PDF",
-                                    data=pdf_b,
-                                    file_name=f"Factura_PixelThread_#{doc_id}.pdf",
-                                    mime="application/pdf",
-                                    key=f"cli_dl_pdf_{doc_id}",
-                                    use_container_width=True
-                                )
         else:
             st.info("Aún no tienes pedidos completados.")
+
+    # --- PESTAÑA GENERAR FACTURA CLIENTE (TIEMPO REAL) ---
+    with tab_factura:
+        st.subheader("🧾 Generar Factura de Pedidos Completados")
+        pedidos_completados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
+        
+        total_generado = sum(float(p.get("precio", 0.0) or 0.0) for p in pedidos_completados)
+        cant_pedidos = len(pedidos_completados)
+
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.metric(label="📦 Total de Pedidos Completados", value=cant_pedidos)
+        with col_m2:
+            st.metric(label="💰 Total Generado en Tiempo Real", value=f"${total_generado:.2f}")
+
+        st.markdown("---")
+
+        if cant_pedidos > 0:
+            st.markdown("### Resumen de Trabajos a Facturar:")
+            for p in pedidos_completados:
+                p_id = p.get("id")
+                p_nom = p.get("nombre_proyecto", "Logo")
+                p_monto = float(p.get("precio", 0.0) or 0.0)
+                st.write(f"- **#{p_id}** | {p_nom} — `${p_monto:.2f}`")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            pdf_bytes = crear_pdf_factura_completa(pedidos_completados, user_clean, total_generado)
+            st.download_button(
+                label="📄 GENERAR Y DESCARGAR FACTURA (PDF)",
+                data=pdf_bytes,
+                file_name=f"Factura_{user_clean}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+        else:
+            st.info("No tienes pedidos completados disponibles para facturar en este momento.")
 
 # =========================================================
 # VISTA ADMINISTRADOR
@@ -483,24 +492,13 @@ def renderizar_panel_admin():
                                     recalcular_turnos()
                                     st.rerun()
 
-                            # --- GESTIÓN DE COBRO Y FACTURA ---
-                            with st.expander("🧾 Cobro y Factura"):
-                                n_precio = st.number_input("Precio ($):", value=precio_val, min_value=0.0, step=5.0, key=f"p_act_{doc_id}")
+                            # --- GESTIÓN DE PRECIO DEL LOGO ---
+                            with st.expander("💵 Precio del Logo"):
+                                n_precio = st.number_input("Precio ($):", value=precio_val, min_value=0.0, step=1.0, key=f"p_act_{doc_id}")
                                 if st.button("💾 Guardar Precio", key=f"btn_p_act_{doc_id}", use_container_width=True):
                                     supabase.table("pedidos_bordado").update({"precio": n_precio}).eq("id", doc_id).execute()
-                                    st.success("Precio guardado")
+                                    st.success("Precio asignado")
                                     st.rerun()
-                                
-                                if n_precio > 0:
-                                    pdf_data = crear_pdf_factura(p, p.get("cliente", ""), n_precio)
-                                    st.download_button(
-                                        label="📄 Descargar Factura",
-                                        data=pdf_data,
-                                        file_name=f"Factura_PixelThread_#{doc_id}.pdf",
-                                        mime="application/pdf",
-                                        key=f"dl_pdf_act_{doc_id}",
-                                        use_container_width=True
-                                    )
 
                             archivos_cliente = limpiar_lista_archivos(p.get('archivos', []))
                             if archivos_cliente:
@@ -590,24 +588,12 @@ def renderizar_panel_admin():
                             st.markdown(f"**🎨 Estilo:** {p.get('estilo', 'N/A')}")
                             render_estado_badge("Completado")
                             
-                            # --- GESTIÓN DE COBRO Y FACTURA ---
-                            with st.expander("🧾 Cobro y Factura"):
-                                n_precio = st.number_input("Precio ($):", value=precio_val, min_value=0.0, step=5.0, key=f"p_comp_{doc_id}")
+                            with st.expander("💵 Precio del Logo"):
+                                n_precio = st.number_input("Precio ($):", value=precio_val, min_value=0.0, step=1.0, key=f"p_comp_{doc_id}")
                                 if st.button("💾 Guardar Precio", key=f"btn_p_comp_{doc_id}", use_container_width=True):
                                     supabase.table("pedidos_bordado").update({"precio": n_precio}).eq("id", doc_id).execute()
                                     st.success("Precio guardado")
                                     st.rerun()
-                                
-                                if n_precio > 0:
-                                    pdf_data = crear_pdf_factura(p, p.get("cliente", ""), n_precio)
-                                    st.download_button(
-                                        label="📄 Descargar Factura",
-                                        data=pdf_data,
-                                        file_name=f"Factura_PixelThread_#{doc_id}.pdf",
-                                        mime="application/pdf",
-                                        key=f"dl_pdf_comp_{doc_id}",
-                                        use_container_width=True
-                                    )
 
                             if st.button("🔄 Marcar como Pendiente", key=f"btn_regresar_pend_{doc_id}", use_container_width=True):
                                 supabase.table("pedidos_bordado").update({"estado": "Pendiente"}).eq("id", doc_id).execute()
@@ -664,12 +650,13 @@ def renderizar_panel_admin():
                                 st.rerun()
 
     with tab_admin_clientes:
-        st.subheader("👥 Gestión de Clientes")
+        st.subheader("👥 Gestión de Clientes y Tarifas")
 
         with st.expander("➕ Registrar Nuevo Cliente / Usuario", expanded=False):
             with st.form("form_nuevo_cliente", clear_on_submit=True):
                 nuevo_id = st.text_input("ID o Usuario único (ej: cliente_01):").strip().lower()
                 nuevo_nombre = st.text_input("Nombre Completo del Cliente:").strip()
+                precio_base_input = st.number_input("Precio por Logo por Defecto ($):", min_value=0.0, step=1.0, value=0.0)
                 logo_file = st.file_uploader("Logo del Cliente (Opcional):", type=["png", "jpg", "jpeg"])
                 
                 btn_registrar = st.form_submit_button("💾 GUARDAR CLIENTE")
@@ -686,6 +673,7 @@ def renderizar_panel_admin():
                             supabase.table("usuarios_perfil").upsert({
                                 "id": nuevo_id,
                                 "nombre_usuario": nuevo_nombre,
+                                "precio_base": precio_base_input,
                                 "logo_url": logo_url
                             }).execute()
                             
@@ -720,6 +708,7 @@ def renderizar_panel_admin():
                     cid = cdata["id"]
                     cnombre = cdata.get('nombre_usuario', 'Sin Nombre')
                     clogo = cdata.get('logo_url')
+                    cprecio_base = float(cdata.get('precio_base', 0.0) or 0.0)
 
                     with cols_c[j]:
                         with st.container(border=True):
@@ -736,6 +725,19 @@ def renderizar_panel_admin():
                             with col_txt:
                                 st.markdown(f"**{cnombre}**")
                                 st.caption(f"ID: `{cid}`")
+
+                            # Configurar Precio por Defecto para este Cliente
+                            new_base_p = st.number_input(
+                                f"Tarifa Logo ($) - {cid}:", 
+                                value=cprecio_base, 
+                                min_value=0.0, 
+                                step=1.0, 
+                                key=f"base_p_{cid}"
+                            )
+                            if st.button("💾 Actualizar Tarifa", key=f"save_tarifa_{cid}", use_container_width=True):
+                                supabase.table("usuarios_perfil").update({"precio_base": new_base_p}).eq("id", cid).execute()
+                                st.success("Tarifa del cliente actualizada.")
+                                st.rerun()
 
                             if st.button("🗑️ Eliminar Cliente", key=f"del_cli_{cid}", use_container_width=True):
                                 supabase.table("usuarios_perfil").delete().eq("id", cid).execute()
@@ -776,9 +778,11 @@ else:
             else:
                 nombre_cliente = st.session_state.user
                 logo_cliente_url = None
+                precio_base_cliente = 0.0
                 if user_data:
                     nombre_cliente = user_data.get('nombre_usuario', st.session_state.user)
                     logo_cliente_url = user_data.get('logo_url')
+                    precio_base_cliente = float(user_data.get('precio_base', 0.0) or 0.0)
 
                 col_c1, col_c2 = st.columns([0.1, 3.9], vertical_alignment="center")
                 with col_c1:
@@ -839,7 +843,7 @@ else:
                                     "archivos": archivos_urls,
                                     "archivos_finales": [],
                                     "estado": "Pendiente",
-                                    "precio": 0.00
+                                    "precio": precio_base_cliente
                                 }).execute()
 
                                 recalcular_turnos()
