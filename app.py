@@ -177,14 +177,19 @@ with col_head2:
     with st.popover("⚙️ Menú"):
         st.markdown("### Identificación")
         
-        # Campo de texto para ingresar o modificar el usuario activo
+        # Campo de texto para ingresar el usuario
         nuevo_usuario = st.text_input(
             "Usuario / ID Cliente:", 
             value=st.session_state.user, 
             key="input_user_menu"
         )
-        if nuevo_usuario != st.session_state.user:
-            actualizar_url(st.session_state.modo_vista, nuevo_usuario)
+        
+        # Botón INICIAR justo debajo
+        if st.button("🚀 INICIAR SESIÓN", use_container_width=True, key="btn_iniciar_sesion"):
+            if nuevo_usuario.strip():
+                actualizar_url(st.session_state.modo_vista, nuevo_usuario)
+            else:
+                st.error("⚠️ Ingresa un usuario válido.")
 
         st.markdown("---")
         st.markdown("### Navegación")
@@ -210,9 +215,8 @@ def renderizar_tablas_cliente(user_clean):
         st.success(st.session_state.mensaje_exito)
         st.session_state.mensaje_exito = ""
 
-    # Mensaje de advertencia si no hay un usuario ingresado
     if not user_clean:
-        st.warning("⚠️ No has ingresado un usuario. Abre el menú **⚙️ Menú** arriba a la derecha e ingresa tu Usuario/ID.")
+        st.warning("⚠️ No has iniciado sesión. Abre **⚙️ Menú** arriba a la derecha, escribe tu Usuario e inicia sesión.")
 
     # --- FORMULARIO NUEVO PEDIDO CON LÓGICA CONDICIONAL ---
     with st.expander("➕ NUEVO PEDIDO / ENVIAR LOGO", expanded=st.session_state.expandir_nuevo_pedido):
@@ -274,7 +278,7 @@ def renderizar_tablas_cliente(user_clean):
             if not nombre_proy:
                 st.error("⚠️ El nombre del proyecto es obligatorio.")
             elif not user_clean:
-                st.error("⚠️ Ingresa un usuario en el menú **⚙️ Menú** antes de enviar.")
+                st.error("⚠️ Inicia sesión en el menú **⚙️ Menú** antes de enviar.")
             else:
                 try:
                     lista_archivos_guardar = []
