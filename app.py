@@ -196,7 +196,7 @@ def renderizar_tablas_cliente(user_clean):
         st.success(st.session_state.mensaje_exito)
         st.session_state.mensaje_exito = ""
 
-    # --- FORMULARIO NUEVO PEDIDO CON LÓGICA CONDICIONAL ---
+    # --- FORMULARIO NUEVO PEDIDO CON LÓGICA CONDICIONAL ACTUALIZADA ---
     with st.expander("➕ NUEVO PEDIDO / ENVIAR LOGO", expanded=st.session_state.expandir_nuevo_pedido):
         v = st.session_state.form_version
         
@@ -214,7 +214,7 @@ def renderizar_tablas_cliente(user_clean):
             ubicacion_val = "N/A"
             estilo_val = "PLANO"
 
-            # 1. Ubicación SOLO aparece si el producto es GORRA
+            # 1. Si es GORRA
             if tipo_prod == "GORRA":
                 ubicacion_val = st.radio(
                     "Ubicación en Gorra:", 
@@ -222,7 +222,7 @@ def renderizar_tablas_cliente(user_clean):
                     key=f"np_ubi_{v}"
                 )
                 
-                # 2. Estilo SOLO aparece si la ubicación es FRENTE
+                # Estilo SOLO para FRENTE
                 if ubicacion_val == "FRENTE":
                     estilo_val = st.radio(
                         "Estilo de Bordado:", 
@@ -231,8 +231,14 @@ def renderizar_tablas_cliente(user_clean):
                     )
                 else:
                     st.info("ℹ️ Para ubicación Trasero/Lateral el estilo se asigna como PLANO.")
+            
+            # 2. Si es TELA
+            elif tipo_prod == "TELA":
+                st.info("ℹ️ Para Tela el estilo se asigna automáticamente como PLANO.")
+                estilo_val = "PLANO"
+
+            # 3. Si es VARIOS
             else:
-                # Si es TELA o VARIOS, se permite elegir Estilo directamente
                 estilo_val = st.radio(
                     "Estilo de Bordado:", 
                     ["PLANO", "3D / PUFFY"], 
@@ -346,6 +352,8 @@ def renderizar_tablas_cliente(user_clean):
                                         nueva_ubi = st.radio("Ubicación:", ["FRENTE", "TRASERO", "LATERAL"], index=["FRENTE", "TRASERO", "LATERAL"].index(p.get('ubicacion', 'FRENTE')) if p.get('ubicacion') in ["FRENTE", "TRASERO", "LATERAL"] else 0, key=f"edit_ubi_{doc_id}")
                                         if nueva_ubi == "FRENTE":
                                             nuevo_estilo = st.radio("Estilo:", ["PLANO", "3D / PUFFY"], index=["PLANO", "3D / PUFFY"].index(p.get('estilo', 'PLANO')) if p.get('estilo') in ["PLANO", "3D / PUFFY"] else 0, key=f"edit_est_{doc_id}")
+                                    elif nuevo_prod == "TELA":
+                                        nuevo_estilo = "PLANO"
                                     else:
                                         nuevo_estilo = st.radio("Estilo:", ["PLANO", "3D / PUFFY"], index=["PLANO", "3D / PUFFY"].index(p.get('estilo', 'PLANO')) if p.get('estilo') in ["PLANO", "3D / PUFFY"] else 0, key=f"edit_est_{doc_id}")
                                         
