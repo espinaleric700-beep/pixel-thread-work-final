@@ -1,6 +1,8 @@
 streamlit
+supabase
 firebase-admin
 Pillow
 cloudinary
-supabase
 fpdf2
+google-api-python-client
+google-auth
