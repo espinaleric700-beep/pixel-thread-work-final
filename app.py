@@ -1,9 +1,8 @@
 import streamlit as st
 from datetime import datetime
-import firebase_admin
-from firebase_admin import credentials, firestore
 import cloudinary
 import cloudinary.uploader
+from supabase import create_client, Client
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Pixel Thread | Pro", layout="wide")
@@ -17,7 +16,7 @@ cloudinary.config(
 )
 
 def subir_a_cloudinary(file_obj, nombre_archivo):
-    """Sube archivos a Cloudinary."""
+    """Sube archivos pesados a Cloudinary y devuelve URL pública."""
     try:
         extension = nombre_archivo.split('.')[-1].lower()
         resource_type = "image" if extension in ["png", "jpg", "jpeg", "webp"] else "raw"
@@ -32,10 +31,18 @@ def subir_a_cloudinary(file_obj, nombre_archivo):
         st.error(f"Error al subir a Cloudinary: {e}")
         return None
 
+# --- INICIALIZACIÓN DE SUPABASE ---
+@st.cache_resource
+def init_supabase() -> Client:
+    url = st.secrets["supabase"]["URL"]
+    key = st.secrets["supabase"]["KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
 # --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
-    /* Ocultar por completo la barra superior, perfil, menú y botones flotantes */
     [data-testid="stHeader"], .stAppToolbar, header {
         display: none !important;
         visibility: hidden !important;
@@ -104,66 +111,31 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- INICIALIZACIÓN DE FIREBASE ---
-@st.cache_resource
-def init_fb():
-    if not firebase_admin._apps:
-        cred_dict = dict(st.secrets["firebase"])
-        cred = credentials.Certificate(cred_dict)
-        firebase_admin.initialize_app(cred)
-    return firestore.client()
-
-db = init_fb()
-
 # --- FUNCIONES AUXILIARES ---
 def recalcular_turnos():
     try:
-        docs = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
+        res = supabase.table("pedidos_bordado").select("id, estado").order("timestamp").execute()
+        docs = res.data or []
         turno_actual = 1
-        for doc in docs:
-            data = doc.to_dict()
-            estado = data.get("estado", "Pendiente")
+        for p in docs:
+            doc_id = p["id"]
+            estado = p.get("estado", "Pendiente")
             if estado != "Completado":
-                db.collection("pedidos_bordado").document(doc.id).update({"turno": turno_actual})
+                supabase.table("pedidos_bordado").update({"turno": str(turno_actual)}).eq("id", doc_id).execute()
                 turno_actual += 1
             else:
-                db.collection("pedidos_bordado").document(doc.id).update({"turno": "N/A"})
-    except Exception:
-        pass
-
-def obtener_uso_firebase():
-    try:
-        pedidos = list(db.collection("pedidos_bordado").stream())
-        clientes = list(db.collection("usuarios_perfil").stream())
-        total_docs = len(pedidos) + len(clientes)
-        limite_lecturas = 50000
-        lecturas_actuales = min(total_docs * 5, limite_lecturas) 
-        porcentaje_uso = min(float(lecturas_actuales) / limite_lecturas * 100, 100.0)
-        return {
-            "total_docs": total_docs,
-            "lecturas": lecturas_actuales,
-            "limite_lecturas": limite_lecturas,
-            "porcentaje": porcentaje_uso
-        }
-    except Exception:
-        return {"total_docs": 0, "lecturas": 45000, "limite_lecturas": 50000, "porcentaje": 90.0}
+                supabase.table("pedidos_bordado").update({"turno": "N/A"}).eq("id", doc_id).execute()
+    except Exception as e:
+        st.error(f"Error recalculando turnos: {e}")
 
 def limpiar_lista_archivos(raw_data):
-    lista_limpia = []
     if not isinstance(raw_data, list):
         return []
-    for item in raw_data:
-        if isinstance(item, list):
-            lista_limpia.extend(limpiar_lista_archivos(item))
-        elif isinstance(item, dict) and "nombre" in item and ("url" in item or "data" in item):
-            lista_limpia.append(item)
-    return lista_limpia
+    return [item for item in raw_data if isinstance(item, dict) and "nombre" in item]
 
 def vaciar_pedidos():
-    docs = list(db.collection("pedidos_bordado").stream())
-    for doc in docs:
-        db.collection("pedidos_bordado").document(doc.id).delete()
-    return len(docs)
+    res = supabase.table("pedidos_bordado").delete().neq("id", 0).execute()
+    return len(res.data) if res.data else 0
 
 # --- GESTIÓN DE ESTADOS Y URL ---
 params = st.query_params
@@ -222,22 +194,20 @@ st.markdown("<br>", unsafe_allow_html=True)
 def renderizar_tablas_cliente(user_clean):
     tab_pendientes, tab_completados = st.tabs(["⏳ Pedidos Pendientes", "✅ Pedidos Completados"])
 
-    todos = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
-    
-    mis_pedidos = [
-        (p.id, p.to_dict()) for p in todos 
-        if p.to_dict().get("cliente", "").strip().lower() == user_clean
-    ]
+    # Consulta solo los pedidos del cliente en lugar de traer toda la BD
+    res = supabase.table("pedidos_bordado").select("*").eq("cliente", user_clean).order("timestamp").execute()
+    mis_pedidos = res.data or []
 
     with tab_pendientes:
         st.subheader("📋 Pedidos en Proceso")
-        pedidos_activos = [(doc_id, p) for doc_id, p in mis_pedidos if p.get('estado') != "Completado"]
+        pedidos_activos = [p for p in mis_pedidos if p.get('estado') != "Completado"]
         
         if pedidos_activos:
             for i in range(0, len(pedidos_activos), 4):
                 cols = st.columns(4)
                 grupo = pedidos_activos[i:i+4]
-                for j, (doc_id, p) in enumerate(grupo):
+                for j, p in enumerate(grupo):
+                    doc_id = p["id"]
                     with cols[j]:
                         with st.container(border=True):
                             turno_val = p.get('turno', 'N/A')
@@ -253,10 +223,10 @@ def renderizar_tablas_cliente(user_clean):
                             if p.get('comentarios'):
                                 st.caption(f"📝 Nota: {p.get('comentarios')}")
 
-                            archivos = p.get('archivos', [])
+                            archivos = limpiar_lista_archivos(p.get('archivos', []))
                             if archivos:
                                 st.markdown("📁 **Archivos Adjuntos:**")
-                                for idx_a, arch_item in enumerate(archivos):
+                                for arch_item in archivos:
                                     nombre_a = arch_item.get('nombre', 'archivo')
                                     url_a = arch_item.get('url', '')
                                     if url_a:
@@ -275,12 +245,11 @@ def renderizar_tablas_cliente(user_clean):
                                     nuevo_estilo = "PLANO"
                                     if nuevo_prod == "GORRA":
                                         nueva_ubi = st.radio("Ubicación:", ["FRENTE", "TRASERO", "LATERAL"], index=["FRENTE", "TRASERO", "LATERAL"].index(p.get('ubicacion', 'FRENTE')) if p.get('ubicacion') in ["FRENTE", "TRASERO", "LATERAL"] else 0, key=f"edit_ubi_{doc_id}")
-                                        nuevo_estilo = "PLANO"
                                         
                                     nuevos_comentarios = st.text_area("Comentarios:", value=p.get('comentarios', ''), key=f"edit_com_{doc_id}")
 
                                     # --- GESTIÓN DE ARCHIVOS EXISTENTES ---
-                                    archivos_actuales = p.get('archivos', [])
+                                    archivos_actuales = limpiar_lista_archivos(p.get('archivos', []))
                                     if archivos_actuales:
                                         st.markdown("**📂 Archivos subidos previamente:**")
                                         for idx_a, arch in enumerate(archivos_actuales):
@@ -290,9 +259,9 @@ def renderizar_tablas_cliente(user_clean):
                                             with col_a2:
                                                 if st.button("❌", key=f"cli_del_file_{doc_id}_{idx_a}", help="Eliminar este archivo"):
                                                     archivos_actuales.pop(idx_a)
-                                                    db.collection("pedidos_bordado").document(doc_id).update({
+                                                    supabase.table("pedidos_bordado").update({
                                                         "archivos": archivos_actuales
-                                                    })
+                                                    }).eq("id", doc_id).execute()
                                                     st.success("Archivo eliminado.")
                                                     st.rerun()
 
@@ -307,36 +276,36 @@ def renderizar_tablas_cliente(user_clean):
                                                 if u_url:
                                                     lista_arch.append({"nombre": na.name, "url": u_url})
 
-                                        db.collection("pedidos_bordado").document(doc_id).update({
+                                        supabase.table("pedidos_bordado").update({
                                             "nombre_proyecto": nuevo_nombre,
                                             "producto": nuevo_prod,
                                             "ubicacion": nueva_ubi,
                                             "estilo": nuevo_estilo,
                                             "comentarios": nuevos_comentarios,
                                             "archivos": lista_arch
-                                        })
+                                        }).eq("id", doc_id).execute()
                                         st.success("¡Pedido actualizado!")
                                         st.rerun()
 
                                 if st.button("🗑️ Eliminar Pedido Completo", key=f"cli_del_{doc_id}", use_container_width=True):
-                                    db.collection("pedidos_bordado").document(doc_id).delete()
+                                    supabase.table("pedidos_bordado").delete().eq("id", doc_id).execute()
                                     recalcular_turnos()
                                     st.success("Pedido eliminado correctamente.")
                                     st.rerun()
                             else:
-                                st.caption("🔒 *El pedido ya está en proceso o en producción, por lo que no se puede modificar ni eliminar.*")
+                                st.caption("🔒 *El pedido está en proceso o producción y no se puede modificar.*")
         else:
             st.info("No tienes pedidos pendientes activos.")
 
     with tab_completados:
         st.subheader("🎉 Historial de Pedidos Listos")
-        pedidos_terminados = [(doc_id, p) for doc_id, p in mis_pedidos if p.get('estado') == "Completado"]
+        pedidos_terminados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
 
         if pedidos_terminados:
             for i in range(0, len(pedidos_terminados), 4):
                 cols = st.columns(4)
                 grupo = pedidos_terminados[i:i+4]
-                for j, (doc_id, p) in enumerate(grupo):
+                for j, p in enumerate(grupo):
                     with cols[j]:
                         with st.container(border=True):
                             st.markdown(f"**🧵 Proyecto:** {p.get('nombre_proyecto', 'N/A')}")
@@ -350,13 +319,13 @@ def renderizar_tablas_cliente(user_clean):
                                 st.markdown("✨ **Archivos Entregados para Descarga:**")
                                 for idx_f, af in enumerate(archivos_finales):
                                     nom_f = af.get('nombre', f'archivo_{idx_f+1}')
-                                    url_f = af.get('url') or af.get('data', '')
+                                    url_f = af.get('url', '')
                                     if url_f:
                                         if nom_f.lower().endswith(('png', 'jpg', 'jpeg', 'webp')):
                                             st.image(url_f, width=120, caption=nom_f)
                                         st.markdown(f"📥 [**Descargar {nom_f}**]({url_f})")
                             else:
-                                st.warning("⚠️ El pedido está completado, pero no hay archivos cargados aún.")
+                                st.warning("⚠️ Sin archivos cargados aún.")
         else:
             st.info("Aún no tienes pedidos completados.")
 
@@ -365,26 +334,6 @@ def renderizar_tablas_cliente(user_clean):
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_panel_admin():
-    uso_fb = obtener_uso_firebase()
-    porcentaje_uso = uso_fb["porcentaje"]
-    
-    st.markdown("### 📊 Estado del Plan Firebase")
-    col_metrica1, col_metrica2, col_metrica3 = st.columns(3)
-    with col_metrica1:
-        st.metric(label="Lecturas Diarias", value=f"{uso_fb['lecturas']:,} / {uso_fb['limite_lecturas']:,}")
-    with col_metrica2:
-        st.metric(label="Porcentaje Utilizado", value=f"{porcentaje_uso:.1f}%")
-    with col_metrica3:
-        if porcentaje_uso >= 90:
-            st.error("⚠️ ¡Límite crítico alcanzado!")
-        elif porcentaje_uso > 75:
-            st.warning("⚡ Uso elevado del plan gratuito.")
-        else:
-            st.success("✅ Uso dentro del margen seguro.")
-            
-    st.progress(min(porcentaje_uso / 100.0, 1.0))
-    st.markdown("---")
-
     tab_admin_pend, tab_admin_comp, tab_admin_clientes = st.tabs([
         "⏳ Pendientes y En Proceso", 
         "✅ Completados / Entregados", 
@@ -392,16 +341,18 @@ def renderizar_panel_admin():
     ])
 
     recalcular_turnos()
-    docs = list(db.collection("pedidos_bordado").order_by("timestamp").stream())
+    res = supabase.table("pedidos_bordado").select("*").order("timestamp").execute()
+    docs = res.data or []
 
     with tab_admin_pend:
-        pedidos_activos = [(doc.id, doc.to_dict()) for doc in docs if doc.to_dict().get('estado') != "Completado"]
+        pedidos_activos = [p for p in docs if p.get('estado') != "Completado"]
 
         if pedidos_activos:
             for i in range(0, len(pedidos_activos), 4):
                 cols = st.columns(4)
                 grupo = pedidos_activos[i:i+4]
-                for j, (doc_id, p) in enumerate(grupo):
+                for j, p in enumerate(grupo):
+                    doc_id = p["id"]
                     with cols[j]:
                         with st.container(border=True):
                             turno_val = p.get('turno', 'N/A')
@@ -420,19 +371,19 @@ def renderizar_panel_admin():
                             
                             if estado_actual == "Pendiente":
                                 if st.button("🔄 En Proceso", key=f"btn_proceso_{doc_id}", use_container_width=True):
-                                    db.collection("pedidos_bordado").document(doc_id).update({"estado": "En Proceso"})
+                                    supabase.table("pedidos_bordado").update({"estado": "En Proceso"}).eq("id", doc_id).execute()
                                     recalcular_turnos()
                                     st.rerun()
                             else:
                                 if st.button("🔄 Pendiente", key=f"btn_pendiente_{doc_id}", use_container_width=True):
-                                    db.collection("pedidos_bordado").document(doc_id).update({"estado": "Pendiente"})
+                                    supabase.table("pedidos_bordado").update({"estado": "Pendiente"}).eq("id", doc_id).execute()
                                     recalcular_turnos()
                                     st.rerun()
 
-                            archivos_cliente = p.get('archivos', [])
+                            archivos_cliente = limpiar_lista_archivos(p.get('archivos', []))
                             if archivos_cliente:
                                 st.markdown("📁 **Archivos del Cliente:**")
-                                for idx_ac, ac in enumerate(archivos_cliente):
+                                for ac in archivos_cliente:
                                     nom_ac = ac.get('nombre', 'archivo')
                                     url_ac = ac.get('url', '')
                                     if url_ac:
@@ -452,7 +403,7 @@ def renderizar_panel_admin():
                                         with c_btn:
                                             if st.button("❌", key=f"del_arch_pend_{doc_id}_{idx_f}", help="Eliminar este archivo"):
                                                 lista_finales.pop(idx_f)
-                                                db.collection("pedidos_bordado").document(doc_id).update({"archivos_finales": lista_finales})
+                                                supabase.table("pedidos_bordado").update({"archivos_finales": lista_finales}).eq("id", doc_id).execute()
                                                 st.rerun()
                                                 
                                 st.markdown("**➕ Seleccionar entregables (.EMB, .DST, .PES, etc):**")
@@ -466,22 +417,21 @@ def renderizar_panel_admin():
                                     if archivos_entregables:
                                         try:
                                             status_subida = st.empty()
-                                            total_archivos = len(archivos_entregables)
                                             timestamp_num = int(datetime.now().timestamp())
                                             
                                             for idx, af in enumerate(archivos_entregables, start=1):
-                                                status_subida.info(f"⏳ Subiendo {af.name} ({idx}/{total_archivos})...")
+                                                status_subida.info(f"⏳ Subiendo {af.name}...")
                                                 nombre_unico = f"entrega_{doc_id}_{timestamp_num}_{af.name}"
                                                 url_publica = subir_a_cloudinary(af, nombre_unico)
                                                 
                                                 if url_publica:
                                                     lista_finales.append({"nombre": af.name, "url": url_publica})
                                                 
-                                            db.collection("pedidos_bordado").document(doc_id).update({
+                                            supabase.table("pedidos_bordado").update({
                                                 "archivos_finales": lista_finales,
                                                 "estado": "Completado",
                                                 "turno": "N/A"
-                                            })
+                                            }).eq("id", doc_id).execute()
                                             
                                             recalcular_turnos()
                                             status_subida.success("¡Pedido marcado como Completado!")
@@ -492,24 +442,21 @@ def renderizar_panel_admin():
                                         st.warning("Adjunta al menos un archivo.")
 
                             if st.button("🗑️ Eliminar Pedido", key=f"mob_del_{doc_id}", use_container_width=True):
-                                db.collection("pedidos_bordado").document(doc_id).delete()
+                                supabase.table("pedidos_bordado").delete().eq("id", doc_id).execute()
                                 recalcular_turnos()
                                 st.rerun()
         else:
             st.info("🎉 No hay pedidos pendientes de revisión.")
 
     with tab_admin_comp:
-        pedidos_completados_admin = [
-            (doc.id, doc.to_dict()) 
-            for doc in docs 
-            if doc.to_dict().get('estado') == "Completado"
-        ]
+        pedidos_completados_admin = [p for p in docs if p.get('estado') == "Completado"]
 
         if pedidos_completados_admin:
             for i in range(0, len(pedidos_completados_admin), 4):
                 cols = st.columns(4)
                 grupo = pedidos_completados_admin[i:i+4]
-                for j, (doc_id, p) in enumerate(grupo):
+                for j, p in enumerate(grupo):
+                    doc_id = p["id"]
                     with cols[j]:
                         with st.container(border=True):
                             st.markdown(f"**👤 {p.get('cliente')}**")
@@ -520,7 +467,7 @@ def renderizar_panel_admin():
                             render_estado_badge("Completado")
                             
                             if st.button("🔄 Marcar como Pendiente", key=f"btn_regresar_pend_{doc_id}", use_container_width=True):
-                                db.collection("pedidos_bordado").document(doc_id).update({"estado": "Pendiente"})
+                                supabase.table("pedidos_bordado").update({"estado": "Pendiente"}).eq("id", doc_id).execute()
                                 recalcular_turnos()
                                 st.rerun()
                             
@@ -536,7 +483,7 @@ def renderizar_panel_admin():
                                         with c_btn:
                                             if st.button("❌", key=f"del_arch_comp_{doc_id}_{idx_f}", help="Eliminar este archivo"):
                                                 lista_finales.pop(idx_f)
-                                                db.collection("pedidos_bordado").document(doc_id).update({"archivos_finales": lista_finales})
+                                                supabase.table("pedidos_bordado").update({"archivos_finales": lista_finales}).eq("id", doc_id).execute()
                                                 st.rerun()
                                                 
                                 st.markdown("**➕ Agregar más entregables:**")
@@ -558,9 +505,9 @@ def renderizar_panel_admin():
                                                 if url_pub:
                                                     lista_finales.append({"nombre": af.name, "url": url_pub})
                                                 
-                                            db.collection("pedidos_bordado").document(doc_id).update({
+                                            supabase.table("pedidos_bordado").update({
                                                 "archivos_finales": lista_finales
-                                            })
+                                            }).eq("id", doc_id).execute()
                                             status_subida.success("¡Archivos agregados!")
                                             st.rerun()
                                         except Exception as e:
@@ -569,7 +516,7 @@ def renderizar_panel_admin():
                                         st.warning("Selecciona al menos un archivo.")
 
                             if st.button("🗑️ Eliminar Pedido", key=f"mob_del_comp_{doc_id}", use_container_width=True):
-                                db.collection("pedidos_bordado").document(doc_id).delete()
+                                supabase.table("pedidos_bordado").delete().eq("id", doc_id).execute()
                                 recalcular_turnos()
                                 st.rerun()
 
@@ -593,11 +540,11 @@ def renderizar_panel_admin():
                             if logo_file:
                                 logo_url = subir_a_cloudinary(logo_file, f"logo_{nuevo_id}_{logo_file.name}")
                             
-                            db.collection("usuarios_perfil").document(nuevo_id).set({
+                            supabase.table("usuarios_perfil").upsert({
+                                "id": nuevo_id,
                                 "nombre_usuario": nuevo_nombre,
-                                "logo_url": logo_url,
-                                "creado_en": datetime.now()
-                            }, merge=True)
+                                "logo_url": logo_url
+                            }).execute()
                             
                             st.success(f"✅ Cliente '{nuevo_nombre}' ({nuevo_id}) registrado correctamente.")
                             st.rerun()
@@ -605,13 +552,13 @@ def renderizar_panel_admin():
                             st.error(f"Error al guardar cliente: {err}")
 
         with st.expander("⚠️ ELIMINAR PEDIDOS (Conservar Clientes)", expanded=False):
-            st.warning("Esta opción eliminará TODOS los pedidos y sus archivos de la base de datos para liberar espacio. Los perfiles de clientes SE MANTENDRÁN intactos.")
+            st.warning("Esta opción eliminará TODOS los pedidos para liberar espacio.")
             confirmacion = st.checkbox("Entiendo que se borrará el historial completo de pedidos.")
             if st.button("🔥 ELIMINAR TODOS LOS PEDIDOS", use_container_width=True):
                 if confirmacion:
                     try:
                         cant_pedidos = vaciar_pedidos()
-                        st.success(f"✅ Se eliminaron {cant_pedidos} pedidos correctamente. Los perfiles de clientes se han conservado.")
+                        st.success(f"✅ Se eliminaron {cant_pedidos} pedidos correctamente.")
                         st.rerun()
                     except Exception as err_vaciar:
                         st.error(f"Error al eliminar pedidos: {err_vaciar}")
@@ -620,16 +567,16 @@ def renderizar_panel_admin():
 
         st.markdown("---")
 
-        clientes_docs = list(db.collection("usuarios_perfil").stream())
+        clientes_res = supabase.table("usuarios_perfil").select("*").execute()
+        clientes_docs = clientes_res.data or []
         if clientes_docs:
             for i in range(0, len(clientes_docs), 3):
                 cols_c = st.columns(3)
                 grupo_c = clientes_docs[i:i+3]
-                for j, cdoc in enumerate(grupo_c):
-                    cdata = cdoc.to_dict()
-                    cid = cdoc.id
+                for j, cdata in enumerate(grupo_c):
+                    cid = cdata["id"]
                     cnombre = cdata.get('nombre_usuario', 'Sin Nombre')
-                    clogo = cdata.get('logo_url') or cdata.get('logo_b64')
+                    clogo = cdata.get('logo_url')
 
                     with cols_c[j]:
                         with st.container(border=True):
@@ -648,7 +595,7 @@ def renderizar_panel_admin():
                                 st.caption(f"ID: `{cid}`")
 
                             if st.button("🗑️ Eliminar Cliente", key=f"del_cli_{cid}", use_container_width=True):
-                                db.collection("usuarios_perfil").document(cid).delete()
+                                supabase.table("usuarios_perfil").delete().eq("id", cid).execute()
                                 st.success(f"Cliente {cid} eliminado.")
                                 st.rerun()
         else:
@@ -676,20 +623,19 @@ else:
         st.info("👆 Ingresa tu ID de usuario arriba para ver tus pedidos.")
     else:
         try:
-            user_doc_ref = db.collection("usuarios_perfil").document(user_clean)
-            user_doc = user_doc_ref.get()
+            res_u = supabase.table("usuarios_perfil").select("*").eq("id", user_clean).execute()
+            user_data = res_u.data[0] if res_u.data else None
             
             is_admin = user_clean in [adm.lower() for adm in ADMINS_AUTORIZADOS]
 
-            if not user_doc.exists and not is_admin:
+            if not user_data and not is_admin:
                 st.error("❌ El usuario ingresado no existe o no está registrado en el sistema. Por favor, verifica tu ID.")
             else:
                 nombre_cliente = st.session_state.user
                 logo_cliente_url = None
-                if user_doc.exists:
-                    data_u = user_doc.to_dict()
-                    nombre_cliente = data_u.get('nombre_usuario', st.session_state.user)
-                    logo_cliente_url = data_u.get('logo_url') or data_u.get('logo_b64')
+                if user_data:
+                    nombre_cliente = user_data.get('nombre_usuario', st.session_state.user)
+                    logo_cliente_url = user_data.get('logo_url')
 
                 col_c1, col_c2 = st.columns([0.1, 3.9], vertical_alignment="center")
                 with col_c1:
@@ -740,7 +686,7 @@ else:
                                         if url_u:
                                             archivos_urls.append({"nombre": arch.name, "url": url_u})
 
-                                db.collection("pedidos_bordado").add({
+                                supabase.table("pedidos_bordado").insert({
                                     "cliente": user_clean,
                                     "nombre_proyecto": nombre_proyecto,
                                     "producto": tipo_producto,
@@ -749,9 +695,8 @@ else:
                                     "comentarios": comentarios,
                                     "archivos": archivos_urls,
                                     "archivos_finales": [],
-                                    "estado": "Pendiente",
-                                    "timestamp": datetime.now()
-                                })
+                                    "estado": "Pendiente"
+                                }).execute()
 
                                 recalcular_turnos()
                                 st.session_state.mensaje_exito = "¡Pedido enviado con éxito!"
