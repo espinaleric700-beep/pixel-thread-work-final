@@ -192,15 +192,21 @@ st.markdown("<br>", unsafe_allow_html=True)
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_tablas_cliente(user_clean):
-    tab_pendientes, tab_completados = st.tabs(["⏳ Pedidos Pendientes", "✅ Pedidos Completados"])
-
-    # Consulta solo los pedidos del cliente en lugar de traer toda la BD
+    # Consulta solo los pedidos del cliente
     res = supabase.table("pedidos_bordado").select("*").eq("cliente", user_clean).order("timestamp").execute()
     mis_pedidos = res.data or []
 
+    pedidos_activos = [p for p in mis_pedidos if p.get('estado') != "Completado"]
+    pedidos_terminados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
+
+    # Pestañas con conteo dinámico de pedidos/logos
+    tab_pendientes, tab_completados = st.tabs([
+        f"⏳ Pedidos Pendientes ({len(pedidos_activos)})", 
+        f"✅ Pedidos Completados ({len(pedidos_terminados)})"
+    ])
+
     with tab_pendientes:
         st.subheader("📋 Pedidos en Proceso")
-        pedidos_activos = [p for p in mis_pedidos if p.get('estado') != "Completado"]
         
         if pedidos_activos:
             for i in range(0, len(pedidos_activos), 4):
@@ -299,7 +305,6 @@ def renderizar_tablas_cliente(user_clean):
 
     with tab_completados:
         st.subheader("🎉 Historial de Pedidos Listos")
-        pedidos_terminados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
 
         if pedidos_terminados:
             for i in range(0, len(pedidos_terminados), 4):
@@ -334,19 +339,21 @@ def renderizar_tablas_cliente(user_clean):
 # =========================================================
 @st.fragment(run_every=10)
 def renderizar_panel_admin():
-    tab_admin_pend, tab_admin_comp, tab_admin_clientes = st.tabs([
-        "⏳ Pendientes y En Proceso", 
-        "✅ Completados / Entregados", 
-        "👥 Gestión de Clientes"
-    ])
-
     recalcular_turnos()
     res = supabase.table("pedidos_bordado").select("*").order("timestamp").execute()
     docs = res.data or []
 
-    with tab_admin_pend:
-        pedidos_activos = [p for p in docs if p.get('estado') != "Completado"]
+    pedidos_activos = [p for p in docs if p.get('estado') != "Completado"]
+    pedidos_completados_admin = [p for p in docs if p.get('estado') == "Completado"]
 
+    # Pestañas con conteo dinámico para el Administrador
+    tab_admin_pend, tab_admin_comp, tab_admin_clientes = st.tabs([
+        f"⏳ Pendientes y En Proceso ({len(pedidos_activos)})", 
+        f"✅ Completados / Entregados ({len(pedidos_completados_admin)})", 
+        "👥 Gestión de Clientes"
+    ])
+
+    with tab_admin_pend:
         if pedidos_activos:
             for i in range(0, len(pedidos_activos), 4):
                 cols = st.columns(4)
@@ -449,8 +456,6 @@ def renderizar_panel_admin():
             st.info("🎉 No hay pedidos pendientes de revisión.")
 
     with tab_admin_comp:
-        pedidos_completados_admin = [p for p in docs if p.get('estado') == "Completado"]
-
         if pedidos_completados_admin:
             for i in range(0, len(pedidos_completados_admin), 4):
                 cols = st.columns(4)
@@ -586,126 +591,15 @@ def renderizar_panel_admin():
                                     try:
                                         st.image(clogo, width=50)
                                     except Exception:
-                                        st.markdown("👤")
+                                        st.write("🖼️")
                                 else:
-                                    st.markdown("👤")
-                            
+                                    st.write("👤")
                             with col_txt:
                                 st.markdown(f"**{cnombre}**")
                                 st.caption(f"ID: `{cid}`")
 
-                            if st.button("🗑️ Eliminar Cliente", key=f"del_cli_{cid}", use_container_width=True):
-                                supabase.table("usuarios_perfil").delete().eq("id", cid).execute()
-                                st.success(f"Cliente {cid} eliminado.")
-                                st.rerun()
-        else:
-            st.info("No hay perfiles de clientes registrados.")
-
-# =========================================================
-# LÓGICA PRINCIPAL (SELECCIÓN DE VISTA)
-# =========================================================
+# --- CONTROL DE RENDERIZADO PRINCIPAL ---
 if st.session_state.modo_vista == "Admin":
     renderizar_panel_admin()
 else:
-    col_user_1, col_user_2 = st.columns([3, 1], vertical_alignment="bottom")
-
-    with col_user_1:
-        user_input = st.text_input("Ingresa tu Nombre o ID de Usuario:", value=st.session_state.user)
-
-    with col_user_2:
-        if st.button("🔍 Ingresar", use_container_width=True):
-            if user_input.strip() != st.session_state.user:
-                actualizar_url("Cliente", user_input)
-
-    user_clean = st.session_state.user.strip().lower()
-
-    if not user_clean:
-        st.info("👆 Ingresa tu ID de usuario arriba para ver tus pedidos.")
-    else:
-        try:
-            res_u = supabase.table("usuarios_perfil").select("*").eq("id", user_clean).execute()
-            user_data = res_u.data[0] if res_u.data else None
-            
-            is_admin = user_clean in [adm.lower() for adm in ADMINS_AUTORIZADOS]
-
-            if not user_data and not is_admin:
-                st.error("❌ El usuario ingresado no existe o no está registrado en el sistema. Por favor, verifica tu ID.")
-            else:
-                nombre_cliente = st.session_state.user
-                logo_cliente_url = None
-                if user_data:
-                    nombre_cliente = user_data.get('nombre_usuario', st.session_state.user)
-                    logo_cliente_url = user_data.get('logo_url')
-
-                col_c1, col_c2 = st.columns([0.1, 3.9], vertical_alignment="center")
-                with col_c1:
-                    if logo_cliente_url:
-                        try:
-                            st.image(logo_cliente_url, width=85)
-                        except Exception:
-                            st.markdown("<h1>👤</h1>", unsafe_allow_html=True)
-                    else:
-                        st.markdown("<h1>👤</h1>", unsafe_allow_html=True)
-                with col_c2:
-                    st.markdown(f"<h1 style='margin:0; font-size:2.2rem !important;'>Hola, {nombre_cliente}</h1>", unsafe_allow_html=True)
-
-                if st.session_state.mensaje_exito:
-                    st.success(st.session_state.mensaje_exito)
-                    st.session_state.mensaje_exito = ""
-
-                st.markdown("---")
-                fv = st.session_state.form_version
-
-                # --- FORMULARIO DE ENVÍO DE PEDIDO ---
-                with st.expander("➕ Enviar Nuevo Pedido", expanded=st.session_state.expandir_nuevo_pedido):
-                    tipo_producto = st.radio("Tipo de Producto:", ["GORRA", "TELA", "VARIOS"], horizontal=True, key=f"prod_{fv}")
-                    ubicacion, estilo_frente = "N/A", "PLANO"
-
-                    if tipo_producto == "GORRA":
-                        ubicacion = st.radio("Ubicación:", ["FRENTE", "TRASERO", "LATERAL"], horizontal=True, key=f"ubi_{fv}")
-                        estilo_frente = st.radio("Estilo:", ["PLANO"], horizontal=True, key=f"est_{fv}")
-
-                    nombre_proyecto = st.text_input("Nombre del Proyecto", key=f"nom_{fv}")
-                    archivos_subidos = st.file_uploader("Archivos (Imágenes o vectores):", type=["png", "jpg", "jpeg", "dst", "pes", "pdf", "emb"], accept_multiple_files=True, key=f"arch_{fv}")
-                    comentarios = st.text_area("Comentarios", key=f"com_{fv}")
-                    status_ph = st.empty()
-
-                    if st.button("🚀 ENVIAR PEDIDO", use_container_width=True, key=f"btn_send_{fv}"):
-                        if not nombre_proyecto:
-                            status_ph.warning("⚠️ Escribe el nombre del proyecto.")
-                        else:
-                            try:
-                                status_ph.info("⏳ Subiendo archivos y registrando pedido...")
-                                archivos_urls = []
-                                ts = int(datetime.now().timestamp())
-                                
-                                if archivos_subidos:
-                                    for arch in archivos_subidos:
-                                        nom_u = f"cliente_{user_clean}_{ts}_{arch.name}"
-                                        url_u = subir_a_cloudinary(arch, nom_u)
-                                        if url_u:
-                                            archivos_urls.append({"nombre": arch.name, "url": url_u})
-
-                                supabase.table("pedidos_bordado").insert({
-                                    "cliente": user_clean,
-                                    "nombre_proyecto": nombre_proyecto,
-                                    "producto": tipo_producto,
-                                    "ubicacion": ubicacion,
-                                    "estilo": estilo_frente,
-                                    "comentarios": comentarios,
-                                    "archivos": archivos_urls,
-                                    "archivos_finales": [],
-                                    "estado": "Pendiente"
-                                }).execute()
-
-                                recalcular_turnos()
-                                st.session_state.mensaje_exito = "¡Pedido enviado con éxito!"
-                                st.session_state.form_version += 1
-                                st.rerun()
-                            except Exception as err:
-                                status_ph.error(f"Error al guardar: {err}")
-
-                renderizar_tablas_cliente(user_clean)
-
-        except Exception as e:
-            st.error(f"Error al cargar datos del usuario: {e}")
+    renderizar_tablas_cliente(st.session_state.user.strip())
