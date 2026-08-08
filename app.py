@@ -1,81 +1,122 @@
 import streamlit as st
-from supabase import create_client, Client
+import firebase_admin
+from firebase_admin import credentials, firestore
+import cloudinary
+import cloudinary.uploader
+from PIL import Image
+import json
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Pixel Thread - Nueva Orden", page_icon="📦", layout="wide")
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(
+    page_title="Enviar Logo a Pixel Thread",
+    page_icon="🧵",
+    layout="centered"
+)
 
-# --- CONEXIÓN A SUPABASE ---
+# --- 2. INICIALIZACIÓN DE FIREBASE ---
 @st.cache_resource
-def init_supabase() -> Client:
-    try:
-        url = st.secrets["supabase"]["URL"]
-        key = st.secrets["supabase"]["KEY"]
-        return create_client(url, key)
-    except KeyError as e:
-        st.error(f"⚠️ Error de configuración: Falta la clave {e} en la sección [supabase] de Secrets.")
-        st.stop()
+def init_firebase():
+    if not firebase_admin._apps:
+        # Cargar credenciales desde st.secrets ["firebase"]
+        firebase_dict = dict(st.secrets["firebase"])
+        cred = credentials.Certificate(firebase_dict)
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
 
-supabase = init_supabase()
+db = init_firebase()
 
-# --- OBTENER CLIENTES ---
+# --- 3. INICIALIZACIÓN DE CLOUDINARY ---
+@st.cache_resource
+def init_cloudinary():
+    cloudinary.config(
+        cloud_name=st.secrets["cloudinary"]["cloud_name"],
+        api_key=st.secrets["cloudinary"]["api_key"],
+        api_secret=st.secrets["cloudinary"]["api_secret"],
+        secure=True
+    )
+
+init_cloudinary()
+
+# --- 4. FUNCIONES AUXILIARES ---
 def obtener_clientes():
+    """Obtiene la lista de clientes registrados en Firebase"""
     try:
-        res = supabase.table("clientes").select("id, nombre, precio_defecto").execute()
-        return res.data if res.data else []
-    except Exception:
-        # Retorna lista vacía si la tabla no existe o falla la consulta
+        docs = db.collection("clientes").stream()
+        clientes = []
+        for doc in docs:
+            data = doc.to_dict()
+            data["id"] = doc.id
+            clientes.append(data)
+        return clientes
+    except Exception as e:
+        st.error(f"Error al obtener clientes de Firebase: {e}")
         return []
 
-# --- INTERFAZ PRINCIPAL ---
-st.title("📦 Crear Nueva Orden - Pixel Thread")
+# --- 5. INTERFAZ PRINCIPAL ---
+st.title("🧵 Enviar Logo a Pixel Thread")
 
-clientes = obtener_clientes()
+clientes_list = obtener_clientes()
 
-with st.form("form_nueva_orden", clear_on_submit=True):
-    # Selección o ingreso de cliente
-    if clientes:
-        mapa_clientes = {c["nombre"]: c for c in clientes}
+if not clientes_list:
+    st.warning("No hay clientes registrados en el sistema. Agrégalos desde la sección de Gestión de Clientes.")
+else:
+    # Mapeo de clientes
+    mapa_clientes = {c.get("nombre", f"Cliente {c['id']}"): c for c in clientes_list}
+
+    with st.form("form_enviar_logo", clear_on_submit=True):
+        # Selección de cliente
         cliente_nombre = st.selectbox("Seleccionar Cliente", list(mapa_clientes.keys()))
         cliente_data = mapa_clientes[cliente_nombre]
+
+        # Precio establecido automáticamente desde Gestión de Clientes
         precio_asignado = float(cliente_data.get("precio_defecto", 0.0))
-        cliente_id = cliente_data["id"]
-    else:
-        st.warning("⚠️ No se detectó la tabla 'clientes' en Supabase. Puedes ingresar el cliente manualmente:")
-        cliente_nombre = st.text_input("Nombre del Cliente")
-        precio_asignado = 0.0
-        cliente_id = None
 
-    # Campos de la orden
-    nombre_logo = st.text_input("Nombre del Logo / Arte")
-    archivo = st.file_uploader("Cargar Archivo de Bordado", type=["png", "jpg", "dst", "pes", "emb"])
-    notas = st.text_area("Instrucciones o Notas", placeholder="Medidas, tipo de tela, observaciones...")
+        # Campos de la orden
+        nombre_logo = st.text_input("Nombre del Logo / Arte")
+        archivo = st.file_uploader(
+            "Cargar Archivo de Bordado", 
+            type=["png", "jpg", "jpeg", "dst", "pes", "emb"]
+        )
+        notas = st.text_area("Instrucciones o Notas adicionales")
 
-    # Muestra informativa del precio pre-configurado
-    if cliente_id:
+        # Mostrar el precio asignado sin expander editable
         st.info(f"💵 **Precio configurado para este cliente:** ${precio_asignado:.2f} USD")
 
-    submit = st.form_submit_button("Guardar Orden")
+        submit = st.form_submit_button("Guardar Orden")
 
-# --- PROCESAMIENTO Y GUARDADO ---
-if submit:
-    if not nombre_logo.strip():
-        st.error("Por favor ingresa el nombre del logo.")
-    elif not cliente_nombre:
-        st.error("Por favor especifica un cliente.")
-    else:
-        with st.spinner("Guardando orden..."):
-            try:
-                nueva_orden = {
-                    "nombre_logo": nombre_logo,
-                    "precio": precio_asignado,
-                    "notas": notas,
-                    "estado": "Pendiente"
-                }
-                
-                if cliente_id:
-                    nueva_orden["cliente_id"] = cliente_id
+    # --- 6. PROCESAMIENTO Y ENVÍO ---
+    if submit:
+        if not nombre_logo.strip():
+            st.error("Por favor ingresa el nombre del logo.")
+        elif not archivo:
+            st.error("Por favor adjunta el archivo del logo o bordado.")
+        else:
+            with st.spinner("Subiendo archivo y creando la orden..."):
+                try:
+                    # Subir archivo a Cloudinary
+                    upload_result = cloudinary.uploader.upload(
+                        archivo,
+                        resource_type="auto",
+                        folder="pixel_thread_logos"
+                    )
+                    archivo_url = upload_result.get("secure_url")
 
-                supabase.table("ordenes").insert(nueva_orden).execute()
-                st.success(f"✅ ¡Orden '{nombre_logo}' guardada con éxito!")
-            except Exception as e:
-                st.error(f"Error al registrar la orden en la base de datos: {e}")
+                    # Estructura de la orden en Firestore
+                    nueva_orden = {
+                        "cliente_id": cliente_data["id"],
+                        "cliente_nombre": cliente_nombre,
+                        "nombre_logo": nombre_logo,
+                        "precio": precio_asignado,
+                        "archivo_url": archivo_url,
+                        "notas": notas,
+                        "estado": "Pendiente",
+                        "creado_en": firestore.SERVER_TIMESTAMP
+                    }
+
+                    # Guardar en la colección 'ordenes'
+                    db.collection("ordenes").add(nueva_orden)
+
+                    st.success(f"✅ ¡Orden '{nombre_logo}' enviada exitosamente por ${precio_asignado:.2f} USD!")
+
+                except Exception as e:
+                    st.error(f"Error al procesar la orden: {e}")
