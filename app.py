@@ -175,15 +175,29 @@ with col_head1:
 
 with col_head2:
     with st.popover("⚙️ Menú"):
+        st.markdown("### Identificación")
+        
+        # Campo de texto para ingresar o modificar el usuario activo
+        nuevo_usuario = st.text_input(
+            "Usuario / ID Cliente:", 
+            value=st.session_state.user, 
+            key="input_user_menu"
+        )
+        if nuevo_usuario != st.session_state.user:
+            actualizar_url(st.session_state.modo_vista, nuevo_usuario)
+
+        st.markdown("---")
         st.markdown("### Navegación")
+        
         if st.button("👤 Panel Cliente", use_container_width=True): 
             actualizar_url("Cliente", st.session_state.user)
+            
         if st.button("🛠️ Panel Admin", use_container_width=True): 
             usuario_actual = st.session_state.user.strip()
             if usuario_actual.lower() in [a.lower() for a in ADMINS_AUTORIZADOS]:
                 actualizar_url("Admin", st.session_state.user)
             else:
-                st.error("❌ Sin permisos.")
+                st.error("❌ Sin permisos de administrador.")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -196,7 +210,11 @@ def renderizar_tablas_cliente(user_clean):
         st.success(st.session_state.mensaje_exito)
         st.session_state.mensaje_exito = ""
 
-    # --- FORMULARIO NUEVO PEDIDO CON LÓGICA CONDICIONAL ACTUALIZADA ---
+    # Mensaje de advertencia si no hay un usuario ingresado
+    if not user_clean:
+        st.warning("⚠️ No has ingresado un usuario. Abre el menú **⚙️ Menú** arriba a la derecha e ingresa tu Usuario/ID.")
+
+    # --- FORMULARIO NUEVO PEDIDO CON LÓGICA CONDICIONAL ---
     with st.expander("➕ NUEVO PEDIDO / ENVIAR LOGO", expanded=st.session_state.expandir_nuevo_pedido):
         v = st.session_state.form_version
         
@@ -256,7 +274,7 @@ def renderizar_tablas_cliente(user_clean):
             if not nombre_proy:
                 st.error("⚠️ El nombre del proyecto es obligatorio.")
             elif not user_clean:
-                st.error("⚠️ Usuario no identificado en el sistema.")
+                st.error("⚠️ Ingresa un usuario en el menú **⚙️ Menú** antes de enviar.")
             else:
                 try:
                     lista_archivos_guardar = []
@@ -290,14 +308,14 @@ def renderizar_tablas_cliente(user_clean):
                 except Exception as err:
                     st.error(f"Error al enviar el pedido: {err}")
 
-    # Consulta solo los pedidos del cliente
-    res = supabase.table("pedidos_bordado").select("*").eq("cliente", user_clean).order("timestamp").execute()
+    # Consulta los pedidos del cliente actual
+    res = supabase.table("pedidos_bordado").select("*").eq("cliente", user_clean).order("timestamp").execute() if user_clean else type('obj', (object,), {'data': []})()
     mis_pedidos = res.data or []
 
     pedidos_activos = [p for p in mis_pedidos if p.get('estado') != "Completado"]
     pedidos_terminados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
 
-    # Pestañas con conteo dinámico de pedidos/logos
+    # Pestañas con conteo dinámico
     tab_pendientes, tab_completados = st.tabs([
         f"⏳ Pedidos Pendientes ({len(pedidos_activos)})", 
         f"✅ Pedidos Completados ({len(pedidos_terminados)})"
