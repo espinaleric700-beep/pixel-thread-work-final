@@ -137,6 +137,22 @@ def vaciar_pedidos():
     res = supabase.table("pedidos_bordado").delete().neq("id", 0).execute()
     return len(res.data) if res.data else 0
 
+ADMINS_AUTORIZADOS = ["Pixel2580", "eric"]
+
+def existe_usuario(user_id: str) -> bool:
+    """Verifica si el usuario existe en la tabla usuarios_perfil o si es admin."""
+    user_clean = user_id.strip().lower()
+    if not user_clean:
+        return False
+    # Administradores siempre son válidos
+    if user_clean in [a.lower() for a in ADMINS_AUTORIZADOS]:
+        return True
+    try:
+        res = supabase.table("usuarios_perfil").select("id").eq("id", user_clean).execute()
+        return len(res.data) > 0
+    except Exception:
+        return False
+
 # --- GESTIÓN DE ESTADOS Y URL ---
 params = st.query_params
 if "modo_vista" not in st.session_state: 
@@ -157,8 +173,6 @@ def actualizar_url(vista, user):
     st.query_params["user"] = user.strip()
     st.rerun()
 
-ADMINS_AUTORIZADOS = ["Pixel2580", "eric"]
-
 def render_estado_badge(estado):
     if estado == "Pendiente":
         st.markdown("**Estado:** Pendiente <span class='dot-red'></span>", unsafe_allow_html=True)
@@ -177,19 +191,21 @@ with col_head2:
     with st.popover("⚙️ Menú"):
         st.markdown("### Identificación")
         
-        # Campo de texto para ingresar el usuario
         nuevo_usuario = st.text_input(
             "Usuario / ID Cliente:", 
             value=st.session_state.user, 
             key="input_user_menu"
         )
         
-        # Botón INICIAR justo debajo
+        # Botón INICIAR
         if st.button("🚀 INICIAR SESIÓN", use_container_width=True, key="btn_iniciar_sesion"):
-            if nuevo_usuario.strip():
-                actualizar_url(st.session_state.modo_vista, nuevo_usuario)
-            else:
+            usr = nuevo_usuario.strip()
+            if not usr:
                 st.error("⚠️ Ingresa un usuario válido.")
+            elif existe_usuario(usr):
+                actualizar_url(st.session_state.modo_vista, usr)
+            else:
+                st.error("❌ El usuario no existe en la base de datos.")
 
         st.markdown("---")
         st.markdown("### Navegación")
@@ -319,7 +335,6 @@ def renderizar_tablas_cliente(user_clean):
     pedidos_activos = [p for p in mis_pedidos if p.get('estado') != "Completado"]
     pedidos_terminados = [p for p in mis_pedidos if p.get('estado') == "Completado"]
 
-    # Pestañas con conteo dinámico
     tab_pendientes, tab_completados = st.tabs([
         f"⏳ Pedidos Pendientes ({len(pedidos_activos)})", 
         f"✅ Pedidos Completados ({len(pedidos_terminados)})"
@@ -360,7 +375,6 @@ def renderizar_tablas_cliente(user_clean):
                                             st.image(url_a, width=120, caption=nombre_a)
                                         st.markdown(f"📥 [Descargar {nombre_a}]({url_a})")
 
-                            # --- OPCIONES DE MODIFICAR Y ELIMINAR ---
                             st.markdown("---")
                             if estado_curr == "Pendiente":
                                 with st.expander("✏️ Editar Pedido"):
@@ -381,7 +395,6 @@ def renderizar_tablas_cliente(user_clean):
                                         
                                     nuevos_comentarios = st.text_area("Comentarios:", value=p.get('comentarios', ''), key=f"edit_com_{doc_id}")
 
-                                    # --- GESTIÓN DE ARCHIVOS EXISTENTES ---
                                     archivos_actuales = limpiar_lista_archivos(p.get('archivos', []))
                                     if archivos_actuales:
                                         st.markdown("**📂 Archivos subidos previamente:**")
@@ -473,7 +486,6 @@ def renderizar_panel_admin():
     pedidos_activos = [p for p in docs if p.get('estado') != "Completado"]
     pedidos_completados_admin = [p for p in docs if p.get('estado') == "Completado"]
 
-    # Pestañas con conteo dinámico para el Administrador
     tab_admin_pend, tab_admin_comp, tab_admin_clientes = st.tabs([
         f"⏳ Pendientes y En Proceso ({len(pedidos_activos)})", 
         f"✅ Completados / Entregados ({len(pedidos_completados_admin)})", 
