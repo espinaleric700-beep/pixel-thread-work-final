@@ -735,9 +735,12 @@ def renderizar_panel_admin():
                                 key=f"base_p_{cid}"
                             )
                             if st.button("💾 Actualizar Tarifa", key=f"save_tarifa_{cid}", use_container_width=True):
-                                supabase.table("usuarios_perfil").update({"precio_base": new_base_p}).eq("id", cid).execute()
-                                st.success("Tarifa del cliente actualizada.")
-                                st.rerun()
+                                try:
+                                    supabase.table("usuarios_perfil").update({"precio_base": new_base_p}).eq("id", cid).execute()
+                                    st.success("Tarifa del cliente actualizada.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error("❌ Recuerda agregar la columna 'precio_base' en Supabase ejecutando en el SQL Editor: ALTER TABLE usuarios_perfil ADD COLUMN IF NOT EXISTS precio_base NUMERIC DEFAULT 0.00;")
 
                             if st.button("🗑️ Eliminar Cliente", key=f"del_cli_{cid}", use_container_width=True):
                                 supabase.table("usuarios_perfil").delete().eq("id", cid).execute()
