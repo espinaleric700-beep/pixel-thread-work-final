@@ -3,3 +3,4 @@ firebase-admin
 Pillow
 cloudinary
 supabase
+fpdf2
